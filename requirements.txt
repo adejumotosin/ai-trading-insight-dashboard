@@ -1,0 +1,8 @@
+streamlit
+yfinance
+plotly
+googletrans==4.0.0-rc1
+fpdf
+requests
+beautifulsoup4
+google-generativeai
