@@ -154,20 +154,24 @@ st.plotly_chart(fig, use_container_width=True)
 
 # --- Key Metrics ---
 st.markdown("### 🔧 Key Metrics (Live Data)")
+
+# Robust Dividend Yield handling
+div_yield = info.get('dividendYield')
+if div_yield is None:
+    dividend_yield_str = "N/A"
+else:
+    # If less than 1, treat as fraction
+    dividend_yield_str = f"{div_yield*100:.2f}%" if div_yield < 1 else f"{div_yield:.2f}%"
+
 key_metrics = {
     "Price": f"${info.get('currentPrice', 'N/A'):,.2f}",
     "Market Cap": f"${info.get('marketCap', 0):,}",
     "Volume": f"{info.get('volume', 0):,}",
     "52 Week Range": f"${info.get('fiftyTwoWeekLow', 'N/A'):,.2f} - ${info.get('fiftyTwoWeekHigh', 'N/A'):,.2f}",
     "P/E Ratio": f"{info.get('trailingPE', 'N/A'):.2f}",
-    "Dividend Yield": (
-        f"{float(info['dividendYield']) * 100:.2f}%"
-        if isinstance(info.get('dividendYield'), (float, int)) and info['dividendYield'] < 1
-        else f"{float(info['dividendYield']):.2f}%"
-        if isinstance(info.get('dividendYield'), (float, int))
-        else "N/A"
-    )
+    "Dividend Yield": dividend_yield_str
 }
+
 metrics_df = pd.DataFrame(key_metrics.items(), columns=["Metric", "Value"])
 st.table(metrics_df)
 
