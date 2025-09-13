@@ -7,7 +7,7 @@ import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime
 from io import BytesIO
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 from fpdf import FPDF
 import requests
 from bs4 import BeautifulSoup
