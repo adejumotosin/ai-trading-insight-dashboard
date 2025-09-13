@@ -171,7 +171,13 @@ key_metrics = {
     "Volume": f"{info.get('volume', 0):,}",
     "52 Week Range": f"${info.get('fiftyTwoWeekLow', 'N/A'):,.2f} - ${info.get('fiftyTwoWeekHigh', 'N/A'):,.2f}",
     "P/E Ratio": f"{info.get('trailingPE', 'N/A'):.2f}",
-    "Dividend Yield": f"{info.get('dividendYield', 0) * 100:.2f}%" if info.get('dividendYield') else "N/A"
+    "Dividend Yield": (
+    f"{float(info['dividendYield']) * 100:.2f}%"
+    if isinstance(info.get('dividendYield'), (float, int)) and info['dividendYield'] < 1
+    else f"{float(info['dividendYield']):.2f}%"
+    if isinstance(info.get('dividendYield'), (float, int))
+    else "N/A"
+)
 }
 metrics_df = pd.DataFrame(key_metrics.items(), columns=["Metric", "Value"])
 st.table(metrics_df)
