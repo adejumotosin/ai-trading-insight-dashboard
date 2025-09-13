@@ -84,31 +84,40 @@ def fetch_google_news_headlines(asset):
 
 # --- Helper functions ---
 def translate_text(text, dest_lang):
+    """Translates text to the destination language."""
     if dest_lang.lower() == "english" or not text:
         return text
     try:
-        translator = Translator()
-        return translator.translate(text, dest=dest_lang.lower()[:2]).text
-    except Exception:
+        # CORRECTED: Instantiate the correct class and call the translate method properly.
+        return GoogleTranslator(source='auto', target=dest_lang.lower()[:2]).translate(text)
+    except Exception as e:
+        # Return original text if translation fails
+        st.warning(f"Text translation failed: {e}")
         return text
 
 def generate_gemini_insight(prompt):
+    """Generates insights using the Gemini model and parses the JSON response."""
     try:
         model = genai.GenerativeModel("gemini-1.5-flash-latest")
         response = model.generate_content(prompt)
         response_text = response.text.strip()
+        # Regex to find JSON within markdown code blocks or raw text
         match = re.search(r"```json\s*({.*?})\s*```", response_text, re.DOTALL)
         if not match:
             match = re.search(r"({.*})", response_text, re.DOTALL)
+        
         if match:
             return json.loads(match.group(1)), response_text
         else:
+            # If no JSON is found, return the raw text for debugging
+            st.warning("AI did not return a valid JSON format. Displaying raw text.")
             return None, response_text
     except Exception as e:
         st.error(f"An error occurred with the Gemini AI: {e}")
         return None, None
 
 def create_pdf_report(asset, metrics, insight, sentiment):
+    """Creates a PDF report from the collected data."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
@@ -139,7 +148,7 @@ def create_pdf_report(asset, metrics, insight, sentiment):
 # --- Fetch stock data ---
 info, hist = get_stock_data(asset)
 if info is None or hist.empty:
-    st.error(f"Could not retrieve data for {asset}.")
+    st.error(f"Could not retrieve data for {asset}. Please check the ticker symbol.")
     st.stop()
 
 # --- Candlestick Chart ---
@@ -155,13 +164,14 @@ st.plotly_chart(fig, use_container_width=True)
 # --- Key Metrics ---
 st.markdown("### 🔧 Key Metrics (Live Data)")
 
-# Robust Dividend Yield handling
+# FIXED: Corrected Dividend Yield calculation.
 div_yield = info.get('dividendYield')
 if div_yield is None:
     dividend_yield_str = "N/A"
 else:
-    # If less than 1, treat as fraction
-    dividend_yield_str = f"{div_yield*100:.2f}%" if div_yield < 1 else f"{div_yield:.2f}%"
+    # yfinance provides yield as a decimal (e.g., 0.05 for 5%). 
+    # Always multiply by 100 to correctly format as a percentage.
+    dividend_yield_str = f"{div_yield * 100:.2f}%"
 
 key_metrics = {
     "Price": f"${info.get('currentPrice', 'N/A'):,.2f}",
@@ -182,7 +192,8 @@ if st.button("Generate AI Insight"):
         prompt = f"""
         As a professional AI market analyst, analyze the asset "{asset}" using the following metrics:
         {json.dumps(key_metrics, indent=2)}
-        Return JSON only with keys: verdict, best_for, risk_score, executive_summary, pros, cons, strategy_suggestions, recommendation, bottom_line.
+        Return a single, raw JSON object only, without any markdown formatting or code fences.
+        The JSON object must contain these exact keys: "verdict", "best_for", "risk_score", "executive_summary", "pros", "cons", "strategy_suggestions", "recommendation", "bottom_line".
         """
         insight_data, raw_output = generate_gemini_insight(prompt)
         st.session_state.insight_data = insight_data
@@ -193,7 +204,7 @@ if 'insight_data' in st.session_state and st.session_state.insight_data:
     col1, col2, col3 = st.columns(3)
     col1.metric("Verdict", translate_text(insight_data.get("verdict", "N/A"), lang))
     col2.metric("Best For", translate_text(insight_data.get("best_for", "N/A"), lang))
-    col3.metric("Risk Score", translate_text(insight_data.get("risk_score", "N/A"), lang))
+    col3.metric("Risk Score", translate_text(str(insight_data.get("risk_score", "N/A")), lang))
 
     st.markdown("#### Executive Summary")
     st.info(translate_text(insight_data.get("executive_summary", ""), lang))
@@ -227,18 +238,26 @@ if headlines:
     st.markdown("**Latest Headlines:**")
     for h in headlines:
         st.markdown(f"- {h}")
-    with st.spinner("Analyzing news sentiment..."):
-        sentiment_prompt = f"""
-        Analyze sentiment of these headlines about {asset} and return JSON with keys: sentiment, summary.
-        {json.dumps(headlines, indent=2)}
-        """
-        sentiment_data, _ = generate_gemini_insight(sentiment_prompt)
-        if sentiment_data:
-            st.info(f"🧠 **Sentiment:** {translate_text(sentiment_data.get('sentiment', 'N/A'), lang)}")
-            st.markdown(f"📝 {translate_text(sentiment_data.get('summary', ''), lang)}")
-            st.session_state.sentiment_data = sentiment_data
+    
+    if st.button("Analyze News Sentiment"):
+        with st.spinner("Analyzing news sentiment..."):
+            sentiment_prompt = f"""
+            Analyze the sentiment of these headlines regarding the asset {asset}.
+            Return a single, raw JSON object only, without markdown formatting.
+            The JSON object must contain these exact keys: "sentiment" (e.g., "Positive", "Negative", "Neutral") and "summary".
+            Headlines:
+            {json.dumps(headlines, indent=2)}
+            """
+            sentiment_data, _ = generate_gemini_insight(sentiment_prompt)
+            if sentiment_data:
+                st.session_state.sentiment_data = sentiment_data
+
+if 'sentiment_data' in st.session_state and st.session_state.sentiment_data:
+    sentiment_data = st.session_state.sentiment_data
+    st.info(f"🧠 **Sentiment:** {translate_text(sentiment_data.get('sentiment', 'N/A'), lang)}")
+    st.markdown(f"📝 {translate_text(sentiment_data.get('summary', ''), lang)}")
 else:
-    st.warning("No recent news headlines were found.")
+    st.warning("No recent news headlines were found or sentiment not yet analyzed.")
 
 # --- Export PDF & CSV ---
 st.markdown("### 📤 Export Report")
@@ -269,3 +288,4 @@ with col2:
         file_name=f"{asset}_metrics_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv"
     )
+
