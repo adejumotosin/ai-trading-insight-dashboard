@@ -160,16 +160,20 @@ st.plotly_chart(fig, use_container_width=True)
 # --- Key Metrics ---
 st.markdown("### 🔧 Key Metrics (Live Data)")
 
+# Fetch the dividend yield from the ticker info
 div_yield = info.get('dividendYield')
 
-# This logic now handles both API data formats (0.44 and 0.0044)
-if div_yield is None or pd.isna(div_yield):
-    dividend_yield_str = "N/A"
+# Check if div_yield is a valid number, and handle both decimal and percentage formats
+if div_yield is not None and not pd.isna(div_yield):
+    # A simple check to handle both 0.0044 (decimal) and 0.44 (percentage)
+    # If the number is greater than 1, assume it's a percentage that needs to be divided by 100.
+    # Otherwise, it's a decimal that can be formatted directly.
+    if div_yield > 1:
+        dividend_yield_str = f"{div_yield / 100:.2%}"
+    else:
+        dividend_yield_str = f"{div_yield:.2%}"
 else:
-    # If the number from the API seems to be a pre-formatted percentage (e.g., > 1),
-    # divide it by 100. Otherwise, use it as is.
-    value_to_format = div_yield / 100 if div_yield > 1 else div_yield
-    dividend_yield_str = f"{value_to_format:.2%}"
+    dividend_yield_str = "N/A"
 
 key_metrics = {
     "Price": f"${info.get('currentPrice', 'N/A'):,.2f}",
