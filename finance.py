@@ -7,7 +7,7 @@ import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from io import BytesIO
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 from fpdf import FPDF
 import requests
 from bs4 import BeautifulSoup
@@ -57,14 +57,12 @@ def fetch_google_news_headlines(asset):
 
 # --- Helper Functions ---
 def translate_text(text, dest_lang):
-    """Translates text to a specified destination language."""
     if dest_lang.lower() == "english" or not text:
         return text
     try:
-        translator = Translator()
-        return translator.translate(text, dest=dest_lang.lower()[:2]).text
+        return GoogleTranslator(source='auto', target=dest_lang.lower()[:2]).translate(text)
     except Exception:
-        return text # Return original text if translation fails
+        return text
 
 def generate_gemini_insight(prompt):
     """Generates insights using the Gemini AI model."""
@@ -300,5 +298,6 @@ with col2:
         file_name=f"{asset}_metrics_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv"
     )
+
 
 
