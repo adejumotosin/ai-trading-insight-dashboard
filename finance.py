@@ -163,15 +163,19 @@ st.markdown("### 🔧 Key Metrics (Live Data)")
 # Fetch the dividend yield from the ticker info
 div_yield = info.get('dividendYield')
 
-# Check if div_yield is a valid number, and handle both decimal and percentage formats
 if div_yield is not None and not pd.isna(div_yield):
-    # A simple check to handle both 0.0044 (decimal) and 0.44 (percentage)
-    # If the number is greater than 1, assume it's a percentage that needs to be divided by 100.
-    # Otherwise, it's a decimal that can be formatted directly.
-    if div_yield > 1:
-        dividend_yield_str = f"{div_yield / 100:.2%}"
+    # Heuristically check if the value is likely a percentage (e.g., 0.44, 2.5)
+    # or a decimal (e.g., 0.0044, 0.025).
+    # A common-sense check: dividend yields rarely exceed 15-20%.
+    # If the value is small, but larger than what a decimal should be, it's likely a percentage.
+    if div_yield > 0.05 and div_yield < 100:
+        # If it's something like 0.44 or 2.5, it's probably a percentage that wasn't converted
+        value_to_format = div_yield / 100
     else:
-        dividend_yield_str = f"{div_yield:.2%}"
+        # Otherwise, assume it's a correctly formatted decimal
+        value_to_format = div_yield
+        
+    dividend_yield_str = f"{value_to_format:.2%}"
 else:
     dividend_yield_str = "N/A"
 
