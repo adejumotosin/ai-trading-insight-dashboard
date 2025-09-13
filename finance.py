@@ -163,6 +163,7 @@ st.markdown("### 🔧 Key Metrics (Live Data)")
 # FIXED: Switched to Python's standard percentage formatter for robustness.
 div_yield = info.get('dividendYield')
 
+st.warning(f"👉 RAW VALUE FROM API: {div_yield}")
 # The yfinance library is supposed to provide the dividend yield as a decimal ratio 
 # (e.g., 0.0044 for 0.44%). If you see a number like 44.00%, it means the API
 # provided an incorrect value (0.44 instead of 0.0044) OR Streamlit is using
