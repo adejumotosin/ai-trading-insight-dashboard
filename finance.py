@@ -160,33 +160,29 @@ st.plotly_chart(fig, use_container_width=True)
 # --- Key Metrics ---
 st.markdown("### 🔧 Key Metrics (Live Data)")
 
-# FIXED: Switched to Python's standard percentage formatter for robustness.
 div_yield = info.get('dividendYield')
 
-st.warning(f"👉 RAW VALUE FROM API: {div_yield}")
-# The yfinance library is supposed to provide the dividend yield as a decimal ratio 
-# (e.g., 0.0044 for 0.44%). If you see a number like 44.00%, it means the API
-# provided an incorrect value (0.44 instead of 0.0044) OR Streamlit is using
-# a cached value from a previous run. Using the 'Clear Cache' button is essential.
+# This logic now handles both API data formats (0.44 and 0.0044)
 if div_yield is None or pd.isna(div_yield):
     dividend_yield_str = "N/A"
 else:
-    # This f-string formatter (`.2%`) is the standard Python way to convert a 
-    # ratio to a percentage string. It correctly handles the multiplication and adds the '%' sign.
-    dividend_yield_str = f"{div_yield:.2%}"
-
+    # If the number from the API seems to be a pre-formatted percentage (e.g., > 1),
+    # divide it by 100. Otherwise, use it as is.
+    value_to_format = div_yield / 100 if div_yield > 1 else div_yield
+    dividend_yield_str = f"{value_to_format:.2%}"
 
 key_metrics = {
     "Price": f"${info.get('currentPrice', 'N/A'):,.2f}",
     "Market Cap": f"${info.get('marketCap', 0):,}",
     "Volume": f"{info.get('volume', 0):,}",
     "52 Week Range": f"${info.get('fiftyTwoWeekLow', 'N/A'):,.2f} - ${info.get('fiftyTwoWeekHigh', 'N/A'):,.2f}",
-    "P/E Ratio": f"{info.get('trailingPE', 'N/A'):.2f}",
+    "P/E Ratio": f"{info.get('trailingPE', 'N/A'):.2f}" if info.get('trailingPE') else "N/A",
     "Dividend Yield": dividend_yield_str
 }
 
 metrics_df = pd.DataFrame(key_metrics.items(), columns=["Metric", "Value"])
 st.table(metrics_df)
+
 
 # --- Gemini AI Insight ---
 st.markdown("### 🧠 AI Trading Insight")
