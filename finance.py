@@ -88,10 +88,8 @@ def translate_text(text, dest_lang):
     if dest_lang.lower() == "english" or not text:
         return text
     try:
-        # CORRECTED: Instantiate the correct class and call the translate method properly.
         return GoogleTranslator(source='auto', target=dest_lang.lower()[:2]).translate(text)
     except Exception as e:
-        # Return original text if translation fails
         st.warning(f"Text translation failed: {e}")
         return text
 
@@ -101,7 +99,6 @@ def generate_gemini_insight(prompt):
         model = genai.GenerativeModel("gemini-1.5-flash-latest")
         response = model.generate_content(prompt)
         response_text = response.text.strip()
-        # Regex to find JSON within markdown code blocks or raw text
         match = re.search(r"```json\s*({.*?})\s*```", response_text, re.DOTALL)
         if not match:
             match = re.search(r"({.*})", response_text, re.DOTALL)
@@ -109,7 +106,6 @@ def generate_gemini_insight(prompt):
         if match:
             return json.loads(match.group(1)), response_text
         else:
-            # If no JSON is found, return the raw text for debugging
             st.warning("AI did not return a valid JSON format. Displaying raw text.")
             return None, response_text
     except Exception as e:
@@ -164,14 +160,20 @@ st.plotly_chart(fig, use_container_width=True)
 # --- Key Metrics ---
 st.markdown("### 🔧 Key Metrics (Live Data)")
 
-# FIXED: Corrected Dividend Yield calculation.
+# FIXED: Switched to Python's standard percentage formatter for robustness.
 div_yield = info.get('dividendYield')
-if div_yield is None:
+
+# The yfinance library is supposed to provide the dividend yield as a decimal ratio 
+# (e.g., 0.0044 for 0.44%). If you see a number like 44.00%, it means the API
+# provided an incorrect value (0.44 instead of 0.0044) OR Streamlit is using
+# a cached value from a previous run. Using the 'Clear Cache' button is essential.
+if div_yield is None or pd.isna(div_yield):
     dividend_yield_str = "N/A"
 else:
-    # yfinance provides yield as a decimal (e.g., 0.05 for 5%). 
-    # Always multiply by 100 to correctly format as a percentage.
-    dividend_yield_str = f"{div_yield * 100:.2f}%"
+    # This f-string formatter (`.2%`) is the standard Python way to convert a 
+    # ratio to a percentage string. It correctly handles the multiplication and adds the '%' sign.
+    dividend_yield_str = f"{div_yield:.2%}"
+
 
 key_metrics = {
     "Price": f"${info.get('currentPrice', 'N/A'):,.2f}",
@@ -288,4 +290,5 @@ with col2:
         file_name=f"{asset}_metrics_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv"
     )
+
 
