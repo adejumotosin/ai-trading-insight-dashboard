@@ -106,5 +106,5 @@ Contributions are welcome. Please fork the repository, make your changes, and op
 
 ## Contact
 
-Developed by [Your Name]  
+Developed by Oluwatosin Adejumo 
 Email: adejumoking@gmail.com
