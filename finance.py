@@ -25,6 +25,53 @@ st.set_page_config(
     layout="wide"
 )
 
+# Custom CSS for Premium Look
+st.markdown("""
+<style>
+    .main {
+        background-color: #0e1117;
+    }
+    .stMetric {
+        background-color: #1e2227;
+        padding: 15px !important;
+        border-radius: 10px !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3) !important;
+        border: 1px solid #2d3139 !important;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 24px !important;
+        font-weight: 700 !important;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 45px;
+        background-color: #1e2227;
+        border-radius: 5px 5px 0 0;
+        padding: 10px 20px;
+        color: #ccd6f6;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #2d3139 !important;
+        border-bottom: 2px solid #4e8df5 !important;
+        color: #ffffff !important;
+    }
+    .stButton>button {
+        border-radius: 5px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    .stButton>button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    }
+    .sidebar .sidebar-content {
+        background-color: #1e2227;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Configure Gemini API Key
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
@@ -188,6 +235,47 @@ def parse_gemini_response(response_text):
 
 
 # ============================================================================
+# TECHNICAL ANALYSIS ENGINE
+# ============================================================================
+
+def calculate_indicators(df):
+    """
+    Calculate various technical indicators for the provided historical data.
+    
+    Args:
+        df (DataFrame): Historical price data
+        
+    Returns:
+        DataFrame: Dataframe with added indicator columns
+    """
+    if df is None or df.empty:
+        return df
+    
+    # Simple Moving Averages
+    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    df['SMA_200'] = df['Close'].rolling(window=200).mean()
+    
+    # Exponential Moving Average
+    df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+    
+    # RSI (Relative Strength Index)
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    # MACD (Moving Average Convergence Divergence)
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = df['MACD'] - df['Signal_Line']
+    
+    return df
+
+
+# ============================================================================
 # DATA FETCHING FUNCTIONS (WITH CACHING)
 # ============================================================================
 
@@ -219,6 +307,9 @@ def get_stock_data_safe(ticker_symbol):
         
         if not all(col in hist.columns for col in required_cols):
             return info, None, "Historical data incomplete"
+        
+        # Calculate technical indicators
+        hist = calculate_indicators(hist)
         
         return info, hist, None
         
@@ -491,11 +582,34 @@ if info is None or hist is None:
     st.error(f"❌ Could not retrieve complete data for {asset}. Please try another ticker.")
     st.stop()
 
+# Technical Indicators Selection
+st.sidebar.markdown("---")
+st.sidebar.subheader("🛠️ Technical Indicators")
+show_sma = st.sidebar.checkbox("Show SMA (50/200)", value=False)
+show_ema = st.sidebar.checkbox("Show EMA (20)", value=True)
+show_rsi = st.sidebar.checkbox("Show RSI Chart", value=True)
+show_macd = st.sidebar.checkbox("Show MACD Chart", value=True)
+
+# Comparison Ticker
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚖️ Compare Asset")
+compare_ticker = st.sidebar.text_input(
+    "Compare with (Optional):",
+    value="",
+    help="Enter another ticker to compare performance (e.g., SPY, QQQ, BTC-USD)"
+).upper()
+
+# Fetch comparison data
+compare_hist = None
+if compare_ticker:
+    with st.spinner(f"⚖️ Fetching comparison data for {compare_ticker}..."):
+        _, compare_hist, compare_error = get_stock_data_safe(compare_ticker)
+        if compare_error:
+            st.sidebar.warning(f"⚠️ Comparison error: {compare_error}")
+            compare_hist = None
+
 # Success message
 st.success(f"✅ Successfully loaded data for **{info.get('longName', asset)}**")
-
-# Continue to Part 2...
-st.info("📝 **Part 1 Complete** - Data loaded successfully. Part 2 will contain visualization and analysis features.")
 
 # ============================================================================
 # PART 2: VISUALIZATION & ANALYSIS
@@ -512,7 +626,7 @@ st.markdown("---")
 st.header(f"📈 Market Analysis for {asset}")
 
 # Create tabs for better organization
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Charts", "📋 Metrics", "🧠 AI Insights", "📰 News Sentiment"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Charts", "📋 Metrics", "🧠 AI Insights", "📰 News Sentiment", "💼 Portfolio Simulator"])
 
 # ============================================================================
 # TAB 1: CHARTS
@@ -546,8 +660,9 @@ with tab1:
                 xaxis_title="Date",
                 yaxis_title="Price (USD)",
                 xaxis_rangeslider_visible=False,
-                height=500,
-                hovermode='x unified'
+                height=600,
+                hovermode='x unified',
+                template="plotly_dark"
             )
         
         elif chart_type == "Line":
@@ -556,15 +671,16 @@ with tab1:
                 x=hist.index,
                 y=hist['Close'],
                 mode='lines',
-                name='Close Price',
-                line=dict(color='#1f77b4', width=2)
+                name=f'{asset} Close',
+                line={"color": "#4e8df5", "width": 3}
             ))
             fig.update_layout(
                 title=f"{info.get('longName', asset)} - Line Chart",
                 xaxis_title="Date",
                 yaxis_title="Price (USD)",
-                height=500,
-                hovermode='x unified'
+                height=600,
+                hovermode='x unified',
+                template="plotly_dark"
             )
         
         else:  # Area chart
@@ -573,16 +689,43 @@ with tab1:
                 x=hist.index,
                 y=hist['Close'],
                 fill='tozeroy',
-                name='Close Price',
-                line=dict(color='#2ca02c', width=2)
+                name=f'{asset} Close',
+                line={"color": "#00d1b2", "width": 2}
             ))
             fig.update_layout(
                 title=f"{info.get('longName', asset)} - Area Chart",
                 xaxis_title="Date",
                 yaxis_title="Price (USD)",
-                height=500,
-                hovermode='x unified'
+                height=600,
+                hovermode='x unified',
+                template="plotly_dark"
             )
+
+        # Add Technical Indicators if selected
+        if show_sma:
+            if 'SMA_50' in hist.columns:
+                fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA_50'], name='SMA 50', line={"color": "rgba(255, 165, 0, 0.8)", "width": 1.5}))
+            if 'SMA_200' in hist.columns:
+                fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA_200'], name='SMA 200', line={"color": "rgba(255, 0, 0, 0.8)", "width": 1.5}))
+        
+        if show_ema:
+            if 'EMA_20' in hist.columns:
+                fig.add_trace(go.Scatter(x=hist.index, y=hist['EMA_20'], name='EMA 20', line={"color": "rgba(160, 32, 240, 0.8)", "width": 1.5}))
+        
+        # Add Comparison Asset
+        if compare_hist is not None:
+            # Scale to match the main asset starting price for visual comparison
+            base_close = hist['Close'].iloc[0]
+            compare_base = compare_hist['Close'].iloc[0]
+            scale_factor = base_close / compare_base
+            scaled_compare = compare_hist['Close'] * scale_factor
+            
+            fig.add_trace(go.Scatter(
+                x=compare_hist.index,
+                y=scaled_compare,
+                name=f"{compare_ticker} (Relative)",
+                line={"color": "rgba(200, 200, 200, 0.6)", "dash": "dash", "width": 2}
+            ))
         
         st.plotly_chart(fig, use_container_width=True)
     
@@ -603,6 +746,55 @@ with tab1:
         hovermode='x unified'
     )
     st.plotly_chart(volume_fig, use_container_width=True)
+
+    # Technical Indicator Charts (RSI & MACD)
+    if (show_rsi or show_macd):
+        st.markdown("---")
+        st.header("📉 Technical Oscillators")
+        
+        osc_col1, osc_col2 = st.columns(2)
+        
+        with osc_col1:
+            if show_rsi and 'RSI' in hist.columns:
+                st.subheader("Relative Strength Index (RSI)")
+                rsi_fig = go.Figure()
+                rsi_fig.add_trace(go.Scatter(
+                    x=hist.index, y=hist['RSI'], 
+                    name='RSI', 
+                    line={"color": "#4e8df5", "width": 2}
+                ))
+                rsi_fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought")
+                rsi_fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold")
+                rsi_fig.update_layout(
+                    height=300, 
+                    template="plotly_dark",
+                    margin=dict(t=30, b=20, l=20, r=20),
+                    yaxis=dict(range=[0, 100])
+                )
+                st.plotly_chart(rsi_fig, use_container_width=True)
+            elif show_rsi:
+                st.info("RSI requires more historical data points.")
+
+        with osc_col2:
+            if show_macd and 'MACD' in hist.columns:
+                st.subheader("MACD (Trend Momentum)")
+                macd_fig = go.Figure()
+                macd_fig.add_trace(go.Scatter(x=hist.index, y=hist['MACD'], name='MACD', line={"color": "#4e8df5"}))
+                macd_fig.add_trace(go.Scatter(x=hist.index, y=hist['Signal_Line'], name='Signal', line={"color": "#ff4b4b"}))
+                macd_fig.add_trace(go.Bar(
+                    x=hist.index, y=hist['MACD_Hist'], 
+                    name='Histogram',
+                    marker_color=['rgba(0, 255, 0, 0.5)' if x > 0 else 'rgba(255, 0, 0, 0.5)' for x in hist['MACD_Hist']]
+                ))
+                macd_fig.update_layout(
+                    height=300, 
+                    template="plotly_dark",
+                    margin=dict(t=30, b=20, l=20, r=20),
+                    showlegend=False
+                )
+                st.plotly_chart(macd_fig, use_container_width=True)
+            elif show_macd:
+                st.info("MACD requires more historical data points.")
     
     # Price statistics
     st.subheader("📈 Price Statistics")
@@ -727,7 +919,12 @@ with tab3:
     # Generate AI Insight Button
     if st.button("🚀 Generate AI Insight", key="generate_insight_btn", type="primary"):
         with st.spinner("🤖 AI is analyzing the data... This may take 10-20 seconds."):
-            # Prepare comprehensive prompt
+            # Prepare comprehensive technical summary for AI
+            rsi_val = hist['RSI'].iloc[-1] if 'RSI' in hist.columns else "N/A"
+            macd_val = hist['MACD'].iloc[-1] if 'MACD' in hist.columns else "N/A"
+            sma_50 = hist['SMA_50'].iloc[-1] if 'SMA_50' in hist.columns else "N/A"
+            sma_200 = hist['SMA_200'].iloc[-1] if 'SMA_200' in hist.columns else "N/A"
+            
             prompt = f"""
 As a professional AI financial analyst, provide a comprehensive analysis of {asset} ({info.get('longName', 'Unknown Company')}).
 
@@ -736,7 +933,10 @@ Use the following data:
 - Market Cap: ${info.get('marketCap', 0):,}
 - P/E Ratio: {info.get('trailingPE', 'N/A')}
 - 52 Week Range: ${info.get('fiftyTwoWeekLow', 0):.2f} - ${info.get('fiftyTwoWeekHigh', 0):.2f}
-- Volume: {info.get('volume', 0):,}
+- RSI (14): {rsi_val}
+- MACD: {macd_val}
+- SMA 50: {sma_50}
+- SMA 200: {sma_200}
 - Sector: {info.get('sector', 'N/A')}
 - Industry: {info.get('industry', 'N/A')}
 
@@ -745,15 +945,15 @@ Return ONLY a valid JSON object with these exact keys:
   "verdict": "Buy/Hold/Sell",
   "best_for": "Long-term/Short-term/Day Trading/Swing Trading",
   "risk_score": "Low/Medium/High",
-  "executive_summary": "A comprehensive 2-3 sentence summary of the investment opportunity",
+  "executive_summary": "A comprehensive 2-3 sentence summary of the investment opportunity incorporating technical indicators",
   "pros": ["Pro 1", "Pro 2", "Pro 3"],
   "cons": ["Con 1", "Con 2", "Con 3"],
   "strategy_suggestions": ["Strategy 1", "Strategy 2", "Strategy 3"],
-  "recommendation": "Clear recommendation",
+  "recommendation": "Clear recommendation based on technicals and fundamentals",
   "bottom_line": "Final verdict in one sentence"
 }}
 
-Provide actionable, specific insights based on the data.
+Provide actionable, specific insights based on both fundamental and technical data.
 """
             
             insight_data, raw_output = generate_gemini_insight(prompt, insight_type="trading_insight")
@@ -944,6 +1144,89 @@ Return ONLY a valid JSON object with these exact keys:
         st.markdown("- Limited news coverage")
         st.markdown("- Network issues")
         st.markdown("- The ticker symbol might be too new or obscure")
+
+# ============================================================================
+# TAB 5: PORTFOLIO SIMULATOR
+# ============================================================================
+with tab5:
+    st.subheader("💼 Paper Trading Portfolio Simulator")
+    st.markdown("Track your simulated trades and monitor potential P&L based on current market prices.")
+    
+    # Initialize portfolio in session state
+    if 'portfolio' not in st.session_state:
+        st.session_state.portfolio = []
+        
+    portfolio_col1, portfolio_col2 = st.columns([1, 2])
+    
+    with portfolio_col1:
+        st.markdown("##### 📥 Add New Position")
+        with st.form("portfolio_form"):
+            p_asset = st.text_input("Ticker:", value=asset).upper()
+            p_qty = st.number_input("Quantity:", min_value=0.01, value=10.0, step=1.0)
+            p_buy_price = st.number_input("Buy Price ($):", min_value=0.01, value=float(info.get('currentPrice', 100)), step=0.01)
+            
+            submit_trade = st.form_submit_button("Add Position to Portfolio")
+            
+            if submit_trade:
+                new_pos = {
+                    "asset": p_asset,
+                    "qty": p_qty,
+                    "buy_price": p_buy_price,
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+                }
+                st.session_state.portfolio.append(new_pos)
+                st.success(f"✅ Added {p_qty} shares of {p_asset} to portfolio!")
+
+    with portfolio_col2:
+        st.markdown("##### 💹 Current Holdings")
+        if st.session_state.portfolio:
+            port_data = []
+            total_pl = 0
+            
+            for i, pos in enumerate(st.session_state.portfolio):
+                # Fetch current price for each asset in portfolio
+                if pos['asset'] == asset:
+                    curr_p = info.get('currentPrice', pos['buy_price'])
+                else:
+                    try:
+                        t = yf.Ticker(pos['asset'])
+                        curr_p = t.history(period="1d")['Close'].iloc[-1]
+                    except:
+                        curr_p = pos['buy_price']
+                
+                investment = pos['qty'] * pos['buy_price']
+                current_val = pos['qty'] * curr_p
+                pl = current_val - investment
+                pl_pct = (pl / investment) * 100 if investment != 0 else 0
+                total_pl += pl
+                
+                port_data.append({
+                    "Date": pos['date'],
+                    "Asset": pos['asset'],
+                    "Qty": pos['qty'],
+                    "Buy Price": f"${pos['buy_price']:.2f}",
+                    "Current Price": f"${curr_p:.2f}",
+                    "P&L ($)": f"${pl:.2f}",
+                    "P&L (%)": f"{pl_pct:.2f}%"
+                })
+            
+            st.table(pd.DataFrame(port_data))
+            
+            # Summary Metrics
+            st.markdown("---")
+            total_inv = sum(p['qty']*p['buy_price'] for p in st.session_state.portfolio)
+            total_pl_pct = (total_pl / total_inv * 100) if total_inv != 0 else 0
+            
+            sum_col1, sum_col2 = st.columns(2)
+            with sum_col1:
+                st.metric("Total Portfolio P&L", value=f"${total_pl:.2f}", delta=f"{total_pl_pct:.2f}%")
+            
+            with sum_col2:
+                if st.button("🗑️ Clear Portfolio"):
+                    st.session_state.portfolio = []
+                    st.rerun()
+        else:
+            st.info("Your portfolio is currently empty. Add a position using the form on the left.")
 
 # ============================================================================
 # EXPORT SECTION
