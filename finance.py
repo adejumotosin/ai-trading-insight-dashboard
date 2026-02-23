@@ -11,7 +11,7 @@ from deep_translator import GoogleTranslator
 from fpdf import FPDF
 import requests
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+from groq import Groq
 import hashlib
 import hmac
 
@@ -72,11 +72,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Configure Gemini API Key
+# Configure Groq API Key
 try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    groq_api_key = st.secrets["GROQ_API_KEY"]
+    client = Groq(api_key=groq_api_key)
 except Exception:
-    st.error("❌ Gemini API Key is missing. Please set it in your Streamlit secrets.")
+    st.error("❌ Groq API Key is missing. Please set it in your Streamlit secrets as 'GROQ_API_KEY'.")
     st.stop()
 
 # Initialize session state
@@ -195,15 +196,9 @@ def format_dividend_yield(div_yield):
         return "N/A"
 
 
-def parse_gemini_response(response_text):
+def parse_ai_response(response_text):
     """
     Safely extract and validate JSON from AI response.
-    
-    Args:
-        response_text (str): Raw response from Gemini API
-        
-    Returns:
-        dict or None: Parsed JSON data or None if parsing fails
     """
     if not response_text:
         return None
@@ -366,30 +361,36 @@ def fetch_google_news_headlines(asset):
         return []
 
 
-def generate_gemini_insight(prompt, insight_type="general"):
+def generate_ai_insight(prompt, insight_type="general"):
     """
-    Generates insights using the Gemini model and parses the JSON response.
+    Generates insights using the Groq model and parses the JSON response.
     
     Args:
-        prompt (str): The prompt to send to Gemini
+        prompt (str): The prompt to send to Groq
         insight_type (str): Type of insight for rate limiting
         
     Returns:
         tuple: (parsed_data: dict or None, raw_output: str or None)
     """
     # Check rate limit
-    can_proceed, wait_time = check_rate_limit(f'gemini_{insight_type}', max_calls=3, window_minutes=5)
+    can_proceed, wait_time = check_rate_limit(f'groq_{insight_type}', max_calls=5, window_minutes=5)
     
     if not can_proceed:
         st.error(f"⏳ Rate limit reached. Please wait {wait_time} seconds before trying again.")
         return None, None
     
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
-        response = model.generate_content(prompt)
-        response_text = response.text.strip()
+        # Using Llama-3-70b-8192 for high-quality insights
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            model="llama-3-70b-8192",
+            temperature=0.1,
+        )
+        response_text = chat_completion.choices[0].message.content.strip()
         
-        parsed_data = parse_gemini_response(response_text)
+        parsed_data = parse_ai_response(response_text)
         
         if parsed_data is None:
             st.warning("⚠️ AI did not return valid JSON. Showing raw response.")
@@ -397,7 +398,7 @@ def generate_gemini_insight(prompt, insight_type="general"):
         return parsed_data, response_text
         
     except Exception as e:
-        st.error(f"❌ Gemini API error: {e}")
+        st.error(f"❌ Groq API error: {e}")
         return None, None
 
 
@@ -972,7 +973,7 @@ Return ONLY a valid JSON object with these exact keys:
 Provide actionable, specific insights based on both fundamental and technical data.
 """
             
-            insight_data, raw_output = generate_gemini_insight(prompt, insight_type="trading_insight")
+            insight_data, raw_output = generate_ai_insight(prompt, insight_type="trading_insight")
             
             if insight_data:
                 st.session_state.insight_data = insight_data
@@ -1096,7 +1097,7 @@ Return ONLY a valid JSON object with these exact keys:
 }}
 """
                 
-                sentiment_data, sentiment_raw = generate_gemini_insight(sentiment_prompt, insight_type="sentiment")
+                sentiment_data, sentiment_raw = generate_ai_insight(sentiment_prompt, insight_type="sentiment")
                 
                 if sentiment_data:
                     st.session_state.sentiment_data = sentiment_data
@@ -1322,7 +1323,7 @@ with export_col2:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: gray; padding: 20px;'>
-    <p>📊 <b>AI Trading Dashboard</b> | Powered by Gemini AI & Yahoo Finance</p>
+    <p>📊 <b>AI Trading Dashboard</b> | Powered by Groq AI & Yahoo Finance</p>
     <p style='font-size: 12px;'>⚠️ Disclaimer: This tool is for informational purposes only. Not financial advice. Always do your own research.</p>
     <p style='font-size: 12px;'>Generated on {}</p>
 </div>
