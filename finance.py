@@ -279,10 +279,33 @@ def calculate_indicators(df):
 # DATA FETCHING FUNCTIONS (WITH CACHING)
 # ============================================================================
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_stock_info_cached(ticker_symbol):
+    """
+    Cache metadata for 24 hours as it rarely changes.
+    """
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        return ticker.info
+    except Exception:
+        return None
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_stock_history_cached(ticker_symbol):
+    """
+    Cache historical data for 30 minutes.
+    """
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        return ticker.history(period="1y")
+    except Exception:
+        return None
+
+@st.cache_data(ttl=120, show_spinner=False)
 def get_current_price_safe(ticker_symbol):
     """
-    Lightning fast price fetcher using history(1d) instead of heavy .info
+    Lightning fast price fetcher using history(1d) instead of heavy .info.
+    Cache for 2 minutes.
     """
     try:
         ticker = yf.Ticker(ticker_symbol)
@@ -296,32 +319,34 @@ def get_current_price_safe(ticker_symbol):
 @st.cache_data(ttl=300, show_spinner=False)
 def get_stock_data_safe(ticker_symbol):
     """
-    Fetch stock data with comprehensive error handling.
-    
-    Args:
-        ticker_symbol (str): Stock ticker symbol
-        
-    Returns:
-        tuple: (info: dict, hist: DataFrame, error: str or None)
+    Fetch stock data with comprehensive error handling and multi-level caching.
     """
+    error_header = "⚠️ Yahoo Finance rate limit reached. Please wait a few minutes."
+    
     try:
-        ticker = yf.Ticker(ticker_symbol)
-        info = ticker.info
+        # 1. Get History (Often more reliable than .info)
+        hist = get_stock_history_cached(ticker_symbol)
         
-        # Validate info contains basic data
-        if not info or 'currentPrice' not in info:
-            return None, None, "No price data available for this ticker"
+        # 2. Get Info (Heavy, but construction is cached for 24h)
+        info = get_stock_info_cached(ticker_symbol)
         
-        hist = ticker.history(period="1y")
+        # Fallback: If info fails but history works, provide a minimal info object
+        if not info and hist is not None and not hist.empty:
+            curr_p = float(hist['Close'].iloc[-1])
+            info = {
+                'currentPrice': curr_p,
+                'regularMarketPrice': curr_p,
+                'longName': ticker_symbol,
+                'symbol': ticker_symbol,
+                'note': 'Minimal data (Rate Limited)'
+            }
         
-        # Validate historical data
-        required_cols = ['Open', 'High', 'Low', 'Close']
-        if hist.empty:
+        if not info or ('currentPrice' not in info and 'regularMarketPrice' not in info):
+            return None, None, error_header
+            
+        if hist is None or hist.empty:
             return info, None, "No historical data available"
-        
-        if not all(col in hist.columns for col in required_cols):
-            return info, None, "Historical data incomplete"
-        
+            
         # Calculate technical indicators
         hist = calculate_indicators(hist)
         
@@ -330,10 +355,10 @@ def get_stock_data_safe(ticker_symbol):
     except Exception as e:
         error_msg = str(e).lower()
         if "too many requests" in error_msg or "rate limited" in error_msg:
-            return None, None, "⚠️ Yahoo Finance rate limit reached. Please wait a few minutes and refresh."
+            return None, None, error_header
         if "404" in error_msg or "no data found" in error_msg:
-            return None, None, f"Ticker '{ticker_symbol}' not found. Please check the symbol."
-        return None, None, f"Error fetching data: {error_msg}"
+            return None, None, f"Ticker '{ticker_symbol}' not found."
+        return None, None, f"Error: {error_msg}"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
