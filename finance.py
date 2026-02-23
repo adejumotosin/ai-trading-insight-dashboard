@@ -324,23 +324,55 @@ def get_stock_data_safe(ticker_symbol):
     error_header = "⚠️ Yahoo Finance rate limit reached. Please wait a few minutes."
     
     try:
-        # 1. Get History (Often more reliable than .info)
+        # 1. Initialize Ticker
+        ticker = yf.Ticker(ticker_symbol)
+        
+        # 2. Get History (Often the most reliable)
         hist = get_stock_history_cached(ticker_symbol)
         
-        # 2. Get Info (Heavy, but construction is cached for 24h)
+        # 3. Get Info (Prefer full info, fallback to fast_info)
         info = get_stock_info_cached(ticker_symbol)
         
-        # Fallback: If info fails but history works, provide a minimal info object
-        if not info and hist is not None and not hist.empty:
-            curr_p = float(hist['Close'].iloc[-1])
-            info = {
-                'currentPrice': curr_p,
-                'regularMarketPrice': curr_p,
-                'longName': ticker_symbol,
-                'symbol': ticker_symbol,
-                'note': 'Minimal data (Rate Limited)'
+        # 4. Smart Fallback: Populate missing fields from fast_info or history
+        if not info:
+            info = {}
+            try:
+                # fast_info is a lighter way to get basic metrics
+                fi = ticker.fast_info
+                info.update({
+                    'currentPrice': fi.get('last_price'),
+                    'previousClose': fi.get('previous_close'),
+                    'open': fi.get('open'),
+                    'dayLow': fi.get('day_low'),
+                    'dayHigh': fi.get('day_high'),
+                    'fiftyTwoWeekLow': fi.get('year_low'),
+                    'fiftyTwoWeekHigh': fi.get('year_high'),
+                    'marketCap': fi.get('market_cap'),
+                    'volume': fi.get('last_volume'),
+                    'symbol': ticker_symbol,
+                    'longName': ticker_symbol
+                })
+            except:
+                pass
+
+        # 5. Ultimate Fallback: Extract from history DataFrame if still missing
+        if hist is not None and not hist.empty:
+            last_row = hist.iloc[-1]
+            prev_row = hist.iloc[-2] if len(hist) > 1 else last_row
+            
+            fallback_updates = {
+                'currentPrice': info.get('currentPrice') or float(last_row['Close']),
+                'regularMarketPrice': info.get('regularMarketPrice') or float(last_row['Close']),
+                'previousClose': info.get('previousClose') or float(prev_row['Close']),
+                'open': info.get('open') or float(last_row['Open']),
+                'dayLow': info.get('dayLow') or float(last_row['Low']),
+                'dayHigh': info.get('dayHigh') or float(last_row['High']),
+                'volume': info.get('volume') or int(last_row['Volume']),
+                'longName': info.get('longName') or ticker_symbol,
+                'symbol': info.get('symbol') or ticker_symbol
             }
-        
+            info.update({k: v for k, v in fallback_updates.items() if info.get(k) is None or info.get(k) == 0})
+
         if not info or ('currentPrice' not in info and 'regularMarketPrice' not in info):
             return None, None, error_header
             
