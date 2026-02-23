@@ -4,6 +4,9 @@ import re
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+# Workaround for yfinance caching issues on Streamlit Cloud
+import appdirs as ad
+ad.user_cache_dir = lambda *args: "/tmp"
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -303,13 +306,23 @@ def get_stock_info_cached(ticker_symbol):
         return None
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_stock_history_cached(ticker_symbol):
+def get_stock_history_cached(ticker_symbol, period="1y"):
     """
-    Cache historical data for 30 minutes.
+    Cache historical data for 30 minutes with fallback periods.
     """
     try:
         ticker = yf.Ticker(ticker_symbol)
-        return ticker.history(period="1y")
+        hist = ticker.history(period=period)
+        
+        # If 1y fails, try 6mo as fallback
+        if (hist is None or hist.empty) and period == "1y":
+            hist = ticker.history(period="6mo")
+            
+        # If still fails, try 1mo
+        if (hist is None or hist.empty):
+            hist = ticker.history(period="1mo")
+            
+        return hist
     except Exception:
         return None
 
