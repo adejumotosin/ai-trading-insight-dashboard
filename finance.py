@@ -13,8 +13,9 @@ import requests
 from bs4 import BeautifulSoup
 try:
     from groq import Groq
-except ImportError:
-    st.error("❌ The 'groq' library is not installed. If you are on Streamlit Cloud, please wait for the app to finish installing dependencies or click 'Reboot App' in the 'Manage app' menu.")
+except ImportError as e:
+    st.error(f"❌ Groq import error: {e}")
+    st.info("If you are on Streamlit Cloud, please wait for 'Processing dependencies...' to finish or click 'Reboot App'.")
     st.stop()
 import hashlib
 import hmac

@@ -9,4 +9,4 @@ deep_translator
 lxml
 xlsxwriter
 openpyxl
-groq>=0.3.0
+groq>=0.15.0
