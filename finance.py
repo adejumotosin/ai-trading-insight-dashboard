@@ -1292,6 +1292,9 @@ with export_col2:
         # Historical data sheet
         hist_export = hist.copy()
         hist_export.index.name = 'Date'
+        # Strip timezone info as xlsxwriter doesn't support it
+        if hist_export.index.tz is not None:
+            hist_export.index = hist_export.index.tz_localize(None)
         hist_export.to_excel(writer, sheet_name='Historical Data')
         
         # Metrics sheet
