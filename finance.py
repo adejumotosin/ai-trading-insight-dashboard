@@ -279,6 +279,20 @@ def calculate_indicators(df):
 # DATA FETCHING FUNCTIONS (WITH CACHING)
 # ============================================================================
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_current_price_safe(ticker_symbol):
+    """
+    Lightning fast price fetcher using history(1d) instead of heavy .info
+    """
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        hist = ticker.history(period="1d")
+        if not hist.empty:
+            return float(hist['Close'].iloc[-1])
+        return None
+    except Exception:
+        return None
+
 @st.cache_data(ttl=300, show_spinner=False)
 def get_stock_data_safe(ticker_symbol):
     """
@@ -314,8 +328,10 @@ def get_stock_data_safe(ticker_symbol):
         return info, hist, None
         
     except Exception as e:
-        error_msg = str(e)
-        if "404" in error_msg or "No data found" in error_msg:
+        error_msg = str(e).lower()
+        if "too many requests" in error_msg or "rate limited" in error_msg:
+            return None, None, "⚠️ Yahoo Finance rate limit reached. Please wait a few minutes and refresh."
+        if "404" in error_msg or "no data found" in error_msg:
             return None, None, f"Ticker '{ticker_symbol}' not found. Please check the symbol."
         return None, None, f"Error fetching data: {error_msg}"
 
@@ -1184,15 +1200,12 @@ with tab5:
             total_pl = 0
             
             for i, pos in enumerate(st.session_state.portfolio):
-                # Fetch current price for each asset in portfolio
+                # Fetch current price using optimized cached function
                 if pos['asset'] == asset:
                     curr_p = info.get('currentPrice', pos['buy_price'])
                 else:
-                    try:
-                        t = yf.Ticker(pos['asset'])
-                        curr_p = t.history(period="1d")['Close'].iloc[-1]
-                    except:
-                        curr_p = pos['buy_price']
+                    curr_price_fetched = get_current_price_safe(pos['asset'])
+                    curr_p = curr_price_fetched if curr_price_fetched is not None else pos['buy_price']
                 
                 investment = pos['qty'] * pos['buy_price']
                 current_val = pos['qty'] * curr_p
