@@ -410,12 +410,12 @@ def generate_ai_insight(prompt, insight_type="general"):
         return None, None
     
     try:
-        # Using Llama-3-70b-8192 for high-quality insights
+        # Using Llama-3.3-70b-versatile for high-quality insights
         chat_completion = client.chat.completions.create(
             messages=[
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3-70b-8192",
+            model="llama-3.3-70b-versatile",
             temperature=0.1,
         )
         response_text = chat_completion.choices[0].message.content.strip()
