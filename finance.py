@@ -11,7 +11,11 @@ from deep_translator import GoogleTranslator
 from fpdf import FPDF
 import requests
 from bs4 import BeautifulSoup
-from groq import Groq
+try:
+    from groq import Groq
+except ImportError:
+    st.error("❌ The 'groq' library is not installed. If you are on Streamlit Cloud, please wait for the app to finish installing dependencies or click 'Reboot App' in the 'Manage app' menu.")
+    st.stop()
 import hashlib
 import hmac
 
