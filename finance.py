@@ -379,7 +379,10 @@ def get_stock_data_safe(ticker_symbol):
                 'open': info.get('open') or float(last_row['Open']),
                 'dayLow': info.get('dayLow') or float(last_row['Low']),
                 'dayHigh': info.get('dayHigh') or float(last_row['High']),
+                'fiftyTwoWeekLow': info.get('fiftyTwoWeekLow') or float(hist['Low'].min()),
+                'fiftyTwoWeekHigh': info.get('fiftyTwoWeekHigh') or float(hist['High'].max()),
                 'volume': info.get('volume') or int(last_row['Volume']),
+                'averageVolume': info.get('averageVolume') or int(hist['Volume'].mean()),
                 'longName': info.get('longName') or ticker_symbol,
                 'symbol': info.get('symbol') or ticker_symbol
             }
@@ -932,19 +935,19 @@ with tab2:
     
     # Create comprehensive metrics dictionary
     key_metrics = {
-        "Current Price": f"${safe_float(info.get('currentPrice')): .2f}",
-        "Previous Close": f"${safe_float(info.get('previousClose')): .2f}",
-        "Open": f"${safe_float(info.get('open')): .2f}",
-        "Day Range": f"${safe_float(info.get('dayLow')): .2f} - ${safe_float(info.get('dayHigh')): .2f}",
-        "52 Week Range": f"${safe_float(info.get('fiftyTwoWeekLow')): .2f} - ${safe_float(info.get('fiftyTwoWeekHigh')): .2f}",
-        "Volume": f"{safe_int(info.get('volume')): ,}",
-        "Average Volume": f"{safe_int(info.get('averageVolume')): ,}",
-        "Market Cap": f"${safe_int(info.get('marketCap')): ,}",
+        "Current Price": f"${safe_float(info.get('currentPrice')):.2f}",
+        "Previous Close": f"${safe_float(info.get('previousClose')):.2f}",
+        "Open": f"${safe_float(info.get('open')):.2f}",
+        "Day Range": f"${safe_float(info.get('dayLow')):.2f} - ${safe_float(info.get('dayHigh')):.2f}",
+        "52 Week Range": f"${safe_float(info.get('fiftyTwoWeekLow')):.2f} - ${safe_float(info.get('fiftyTwoWeekHigh')):.2f}",
+        "Volume": f"{safe_int(info.get('volume')):,}",
+        "Average Volume": f"{safe_int(info.get('averageVolume')):,}",
+        "Market Cap": f"${safe_int(info.get('marketCap')):,}",
         "Beta": f"{info.get('beta', 'N/A')}",
-        "P/E Ratio": f"{safe_float(info.get('trailingPE')): .2f}" if info.get('trailingPE') else "N/A",
-        "EPS": f"${safe_float(info.get('trailingEps')): .2f}" if info.get('trailingEps') else "N/A",
+        "P/E Ratio": f"{safe_float(info.get('trailingPE')):.2f}" if info.get('trailingPE') else "N/A",
+        "EPS": f"${safe_float(info.get('trailingEps')):.2f}" if info.get('trailingEps') else "N/A",
         "Dividend Yield": format_dividend_yield(info.get('dividendYield')),
-        "52 Week Change": f"{safe_float(info.get('52WeekChange')) * 100: .2f}%" if info.get('52WeekChange') else "N/A"
+        "52 Week Change": f"{safe_float(info.get('52WeekChange')) * 100:.2f}%" if info.get('52WeekChange') else "N/A"
     }
     
     # Display metrics in organized columns
