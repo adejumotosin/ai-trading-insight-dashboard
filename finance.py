@@ -275,6 +275,18 @@ def calculate_indicators(df):
     return df
 
 
+def safe_float(val, default=0.0):
+    try:
+        return float(val) if val is not None else default
+    except (ValueError, TypeError):
+        return default
+
+def safe_int(val, default=0):
+    try:
+        return int(val) if val is not None else default
+    except (ValueError, TypeError):
+        return default
+
 # ============================================================================
 # DATA FETCHING FUNCTIONS (WITH CACHING)
 # ============================================================================
@@ -920,19 +932,19 @@ with tab2:
     
     # Create comprehensive metrics dictionary
     key_metrics = {
-        "Current Price": f"${info.get('currentPrice', 0):.2f}",
-        "Previous Close": f"${info.get('previousClose', 0):.2f}",
-        "Open": f"${info.get('open', 0):.2f}",
-        "Day Range": f"${info.get('dayLow', 0):.2f} - ${info.get('dayHigh', 0):.2f}",
-        "52 Week Range": f"${info.get('fiftyTwoWeekLow', 0):.2f} - ${info.get('fiftyTwoWeekHigh', 0):.2f}",
-        "Volume": f"{info.get('volume', 0):,}",
-        "Average Volume": f"{info.get('averageVolume', 0):,}",
-        "Market Cap": f"${info.get('marketCap', 0):,}",
+        "Current Price": f"${safe_float(info.get('currentPrice')): .2f}",
+        "Previous Close": f"${safe_float(info.get('previousClose')): .2f}",
+        "Open": f"${safe_float(info.get('open')): .2f}",
+        "Day Range": f"${safe_float(info.get('dayLow')): .2f} - ${safe_float(info.get('dayHigh')): .2f}",
+        "52 Week Range": f"${safe_float(info.get('fiftyTwoWeekLow')): .2f} - ${safe_float(info.get('fiftyTwoWeekHigh')): .2f}",
+        "Volume": f"{safe_int(info.get('volume')): ,}",
+        "Average Volume": f"{safe_int(info.get('averageVolume')): ,}",
+        "Market Cap": f"${safe_int(info.get('marketCap')): ,}",
         "Beta": f"{info.get('beta', 'N/A')}",
-        "P/E Ratio": f"{info.get('trailingPE', 'N/A'):.2f}" if info.get('trailingPE') else "N/A",
-        "EPS": f"${info.get('trailingEps', 'N/A'):.2f}" if info.get('trailingEps') else "N/A",
+        "P/E Ratio": f"{safe_float(info.get('trailingPE')): .2f}" if info.get('trailingPE') else "N/A",
+        "EPS": f"${safe_float(info.get('trailingEps')): .2f}" if info.get('trailingEps') else "N/A",
         "Dividend Yield": format_dividend_yield(info.get('dividendYield')),
-        "52 Week Change": f"{info.get('52WeekChange', 0) * 100:.2f}%" if info.get('52WeekChange') else "N/A"
+        "52 Week Change": f"{safe_float(info.get('52WeekChange')) * 100: .2f}%" if info.get('52WeekChange') else "N/A"
     }
     
     # Display metrics in organized columns
