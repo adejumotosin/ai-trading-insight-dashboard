@@ -418,60 +418,94 @@ def safe_int(val, default=0):
         return default
 
 # ============================================================================
-# DATA FETCHING FUNCTIONS (WITH CACHING)
+# DATA FETCHING FUNCTIONS — SUCCESS-ONLY CACHING
 # ============================================================================
+# NOTE: We do NOT use @st.cache_data here because it caches failure results
+# (None), preventing fallback sources from being tried on reruns.
+# Instead, we use st.session_state to cache only successful responses.
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def get_stock_info_cached(ticker_symbol):
-    """
-    Cache metadata for 24 hours as it rarely changes.
-    """
-    try:
-        ticker = throttled_ticker(ticker_symbol)
-        return ticker.info
-    except Exception:
-        return None
+def _cache_key(prefix, ticker, extra=""):
+    return f"_yf_{prefix}_{ticker}_{extra}"
 
-@st.cache_data(ttl=7200, show_spinner=False)
-def get_stock_history_cached(ticker_symbol, period="1y"):
-    """
-    Cache historical data for 2 hours with fallback periods.
-    Falls back to Stooq if Yahoo Finance is unavailable.
-    """
+def _get_from_session_cache(key, max_age_seconds=1800):
+    """Retrieve data from session-state cache if fresh enough."""
+    if key in st.session_state:
+        entry = st.session_state[key]
+        if time.time() - entry.get("ts", 0) < max_age_seconds:
+            return entry.get("data")
+    return None
+
+def _set_session_cache(key, data):
+    """Store successful data in session-state cache."""
+    st.session_state[key] = {"data": data, "ts": time.time()}
+
+
+def _try_yahoo_history(ticker_symbol, period="1y"):
+    """Try to fetch history from Yahoo Finance. Returns DataFrame or None."""
     try:
         ticker = throttled_ticker(ticker_symbol)
         hist = ticker.history(period=period)
-        
-        # If 1y fails, try 6mo as fallback
-        if (hist is None or hist.empty) and period == "1y":
-            time.sleep(_YF_MIN_INTERVAL)
-            hist = ticker.history(period="6mo")
-            
-        # If still fails, try 1mo
-        if (hist is None or hist.empty):
-            time.sleep(_YF_MIN_INTERVAL)
-            hist = ticker.history(period="1mo")
-        
         if hist is not None and not hist.empty:
             return hist
     except Exception:
         pass
-    
-    # === STOOQ FALLBACK ===
+    return None
+
+def _try_yahoo_info(ticker_symbol):
+    """Try to fetch info from Yahoo Finance. Returns dict or None."""
     try:
-        stooq_hist = fetch_stooq_history(ticker_symbol)
-        if stooq_hist is not None and not stooq_hist.empty:
-            return stooq_hist
+        ticker = throttled_ticker(ticker_symbol)
+        info = ticker.info
+        if info and isinstance(info, dict) and len(info) > 2:
+            return info
     except Exception:
         pass
-    
-    return None
+    # Try fast_info as lighter fallback
+    try:
+        ticker = throttled_ticker(ticker_symbol)
+        fi = ticker.fast_info
+        return {
+            'currentPrice': getattr(fi, 'last_price', None),
+            'previousClose': getattr(fi, 'previous_close', None),
+            'open': getattr(fi, 'open', None),
+            'dayLow': getattr(fi, 'day_low', None),
+            'dayHigh': getattr(fi, 'day_high', None),
+            'fiftyTwoWeekLow': getattr(fi, 'year_low', None),
+            'fiftyTwoWeekHigh': getattr(fi, 'year_high', None),
+            'marketCap': getattr(fi, 'market_cap', None),
+            'volume': getattr(fi, 'last_volume', None),
+            'symbol': ticker_symbol,
+            'longName': ticker_symbol
+        }
+    except Exception:
+        return None
+
+
+def _build_info_from_history(ticker_symbol, hist):
+    """Construct a complete info dict from history data alone."""
+    if hist is None or hist.empty:
+        return {}
+    last_row = hist.iloc[-1]
+    prev_row = hist.iloc[-2] if len(hist) > 1 else last_row
+    return {
+        'currentPrice': float(last_row['Close']),
+        'regularMarketPrice': float(last_row['Close']),
+        'previousClose': float(prev_row['Close']),
+        'open': float(last_row['Open']),
+        'dayLow': float(last_row['Low']),
+        'dayHigh': float(last_row['High']),
+        'fiftyTwoWeekLow': float(hist['Low'].min()),
+        'fiftyTwoWeekHigh': float(hist['High'].max()),
+        'volume': int(last_row['Volume']),
+        'averageVolume': int(hist['Volume'].mean()),
+        'longName': ticker_symbol,
+        'symbol': ticker_symbol
+    }
+
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_current_price_safe(ticker_symbol):
-    """
-    Price fetcher using history(1d). Cache for 15 minutes.
-    """
+    """Price fetcher using history(1d). Cache for 15 minutes."""
     try:
         ticker = throttled_ticker(ticker_symbol)
         hist = ticker.history(period="1d")
@@ -483,11 +517,7 @@ def get_current_price_safe(ticker_symbol):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_portfolio_prices(tickers_tuple):
-    """
-    Fetch current prices for multiple tickers in ONE API call.
-    Accepts a tuple (for Streamlit cache hashability).
-    Cache for 15 minutes.
-    """
+    """Fetch current prices for multiple tickers in ONE API call."""
     if not tickers_tuple:
         return {}
     tickers_list = list(tickers_tuple)
@@ -515,108 +545,77 @@ def get_portfolio_prices(tickers_tuple):
     except Exception:
         return {}
 
-@st.cache_data(ttl=1800, show_spinner=False)
+
 def get_stock_data_safe(ticker_symbol):
     """
-    Fetch stock data with comprehensive error handling, multi-level caching,
-    Stooq fallback, and disk-cache fallback for rate-limited responses.
+    Fetch stock data with multi-source resilience.
+    Priority: Session cache → Yahoo Finance → Stooq → Disk cache
+    Only successful results are cached (failures are NEVER cached).
     """
-    rate_limit_msg = "⚠️ Yahoo Finance rate limit reached."
-    
-    try:
-        # 1. Get History — tries Yahoo first, then Stooq automatically
-        hist = get_stock_history_cached(ticker_symbol)
-        
-        # 2. Get Info (Prefer full info, fallback to fast_info)
-        info = get_stock_info_cached(ticker_symbol)
-        
-        # 3. Smart Fallback: Populate missing fields from fast_info or history
-        if not info:
-            info = {}
-            try:
-                # fast_info is a property object — use getattr(), not .get()
-                ticker = throttled_ticker(ticker_symbol)
-                fi = ticker.fast_info
-                info.update({
-                    'currentPrice': getattr(fi, 'last_price', None),
-                    'previousClose': getattr(fi, 'previous_close', None),
-                    'open': getattr(fi, 'open', None),
-                    'dayLow': getattr(fi, 'day_low', None),
-                    'dayHigh': getattr(fi, 'day_high', None),
-                    'fiftyTwoWeekLow': getattr(fi, 'year_low', None),
-                    'fiftyTwoWeekHigh': getattr(fi, 'year_high', None),
-                    'marketCap': getattr(fi, 'market_cap', None),
-                    'volume': getattr(fi, 'last_volume', None),
-                    'symbol': ticker_symbol,
-                    'longName': ticker_symbol
-                })
-            except Exception:
-                pass
+    # === 1. CHECK SESSION CACHE (instant, no API call) ===
+    cache_key = _cache_key("data", ticker_symbol)
+    cached = _get_from_session_cache(cache_key, max_age_seconds=1800)
+    if cached:
+        return cached  # Returns (info, hist, warning_or_none)
 
-        # 4. Ultimate Fallback: Extract from history DataFrame if still missing
+    hist = None
+    info = None
+    data_source = None
+
+    # === 2. TRY YAHOO FINANCE ===
+    yahoo_hist = _try_yahoo_history(ticker_symbol)
+    if yahoo_hist is not None and not yahoo_hist.empty:
+        hist = yahoo_hist
+        data_source = "yahoo"
+
+    yahoo_info = _try_yahoo_info(ticker_symbol)
+    if yahoo_info:
+        info = yahoo_info
+
+    # === 3. TRY STOOQ FALLBACK (if Yahoo history failed) ===
+    if hist is None:
+        stooq_hist = fetch_stooq_history(ticker_symbol)
+        if stooq_hist is not None and not stooq_hist.empty:
+            hist = stooq_hist
+            data_source = "stooq"
+
+    # === 4. BUILD INFO FROM HISTORY (if Yahoo info failed but we have history) ===
+    if hist is not None and not hist.empty:
+        history_info = _build_info_from_history(ticker_symbol, hist)
+        if info:
+            # Fill gaps in Yahoo info with history-derived values
+            for k, v in history_info.items():
+                if info.get(k) is None or info.get(k) == 0:
+                    info[k] = v
+        else:
+            info = history_info
+
+    # === 5. CHECK IF WE HAVE USABLE DATA ===
+    if info and ('currentPrice' in info or 'regularMarketPrice' in info):
         if hist is not None and not hist.empty:
-            last_row = hist.iloc[-1]
-            prev_row = hist.iloc[-2] if len(hist) > 1 else last_row
-            
-            fallback_updates = {
-                'currentPrice': info.get('currentPrice') or float(last_row['Close']),
-                'regularMarketPrice': info.get('regularMarketPrice') or float(last_row['Close']),
-                'previousClose': info.get('previousClose') or float(prev_row['Close']),
-                'open': info.get('open') or float(last_row['Open']),
-                'dayLow': info.get('dayLow') or float(last_row['Low']),
-                'dayHigh': info.get('dayHigh') or float(last_row['High']),
-                'fiftyTwoWeekLow': info.get('fiftyTwoWeekLow') or float(hist['Low'].min()),
-                'fiftyTwoWeekHigh': info.get('fiftyTwoWeekHigh') or float(hist['High'].max()),
-                'volume': info.get('volume') or int(last_row['Volume']),
-                'averageVolume': info.get('averageVolume') or int(hist['Volume'].mean()),
-                'longName': info.get('longName') or ticker_symbol,
-                'symbol': info.get('symbol') or ticker_symbol
-            }
-            info.update({k: v for k, v in fallback_updates.items() if info.get(k) is None or info.get(k) == 0})
-
-        # 5. Check if we got usable data
-        if not info or ('currentPrice' not in info and 'regularMarketPrice' not in info):
-            # === DISK CACHE FALLBACK ===
-            cached = load_from_disk_cache(ticker_symbol)
-            if cached:
-                cached_info, cached_hist, age_min = cached
-                if cached_info and cached_info.get('currentPrice'):
-                    if cached_hist is not None and not cached_hist.empty:
-                        cached_hist = calculate_indicators(cached_hist)
-                    stale_warning = f"⚠️ Using cached data from {age_min:.0f} minutes ago (Yahoo Finance rate-limited). Click 'Refresh' later."
-                    return cached_info, cached_hist, stale_warning
-            return None, None, rate_limit_msg + " Please wait a few minutes and click 'Refresh'."
-            
-        if hist is None or hist.empty:
-            # Save info to disk even without history
-            save_to_disk_cache(ticker_symbol, info, None)
-            return info, None, "No historical data available"
-            
-        # Calculate technical indicators
-        hist = calculate_indicators(hist)
-        
-        # === SAVE TO DISK CACHE on success ===
+            hist = calculate_indicators(hist)
+        # Save to disk cache for future fallback
         save_to_disk_cache(ticker_symbol, info, hist)
-        
-        return info, hist, None
-        
-    except Exception as e:
-        error_msg = str(e).lower()
-        # === DISK CACHE FALLBACK on any error ===
-        cached = load_from_disk_cache(ticker_symbol)
-        if cached:
-            cached_info, cached_hist, age_min = cached
-            if cached_info and cached_info.get('currentPrice'):
-                if cached_hist is not None and not cached_hist.empty:
-                    cached_hist = calculate_indicators(cached_hist)
-                stale_warning = f"⚠️ Using cached data from {age_min:.0f} minutes ago (error: {error_msg[:60]}). Click 'Refresh' later."
-                return cached_info, cached_hist, stale_warning
-        
-        if "too many requests" in error_msg or "rate limited" in error_msg:
-            return None, None, rate_limit_msg + " Please wait a few minutes and click 'Refresh'."
-        if "404" in error_msg or "no data found" in error_msg:
-            return None, None, f"Ticker '{ticker_symbol}' not found."
-        return None, None, f"Error: {error_msg}"
+
+        warning = None
+        if data_source == "stooq":
+            warning = "⚠️ Using Stooq data (Yahoo Finance unavailable). Some features may be limited."
+        # Cache the SUCCESS in session state
+        result = (info, hist, warning)
+        _set_session_cache(cache_key, result)
+        return result
+
+    # === 6. DISK CACHE FALLBACK (last resort) ===
+    disk_cached = load_from_disk_cache(ticker_symbol)
+    if disk_cached:
+        cached_info, cached_hist, age_min = disk_cached
+        if cached_info and cached_info.get('currentPrice'):
+            if cached_hist is not None and not cached_hist.empty:
+                cached_hist = calculate_indicators(cached_hist)
+            stale_warning = f"⚠️ Using cached data from {age_min:.0f} minutes ago (Yahoo Finance rate-limited). Click 'Refresh' later."
+            return cached_info, cached_hist, stale_warning
+
+    return None, None, "⚠️ Could not fetch data from any source. Yahoo Finance is rate-limited and no cached data is available. Please try again in a few minutes."
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
