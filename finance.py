@@ -1,4 +1,5 @@
 import os
+import time
 import json
 import re
 import streamlit as st
@@ -33,7 +34,7 @@ def get_yf_session():
     session = requests.Session()
     retry = Retry(
         total=5,
-        backoff_factor=1,
+        backoff_factor=2,
         status_forcelist=[429, 500, 502, 503, 504],
     )
     adapter = HTTPAdapter(max_retries=retry)
@@ -42,6 +43,69 @@ def get_yf_session():
     return session
 
 yf_session = get_yf_session()
+
+# ============================================================================
+# GLOBAL REQUEST THROTTLE - prevents burst requests to Yahoo Finance
+# ============================================================================
+_last_yf_call_time = 0.0
+_YF_MIN_INTERVAL = 2.0  # minimum seconds between yfinance API calls
+
+def throttled_ticker(ticker_symbol):
+    """
+    Create a yf.Ticker with global throttling to avoid rate limits.
+    Ensures at least _YF_MIN_INTERVAL seconds between API calls.
+    """
+    global _last_yf_call_time
+    elapsed = time.time() - _last_yf_call_time
+    if elapsed < _YF_MIN_INTERVAL:
+        time.sleep(_YF_MIN_INTERVAL - elapsed)
+    _last_yf_call_time = time.time()
+    return yf.Ticker(ticker_symbol, session=yf_session)
+
+# ============================================================================
+# DISK CACHE - serves stale data when Yahoo Finance is rate-limited
+# ============================================================================
+DISK_CACHE_DIR = "/tmp/yf_cache"
+os.makedirs(DISK_CACHE_DIR, exist_ok=True)
+
+def _disk_cache_path(key):
+    """Get the file path for a disk cache entry."""
+    safe_key = key.replace('/', '_').replace('\\', '_')
+    return os.path.join(DISK_CACHE_DIR, f"{safe_key}.json")
+
+def save_to_disk_cache(key, info_dict, hist_df):
+    """Persist successful API response to disk for fallback use."""
+    try:
+        cache_data = {
+            "info": {k: v for k, v in (info_dict or {}).items()
+                     if isinstance(v, (str, int, float, bool, type(None)))},
+            "timestamp": time.time()
+        }
+        if hist_df is not None and not hist_df.empty:
+            # Store only essential columns to keep file small
+            cols = [c for c in ['Open', 'High', 'Low', 'Close', 'Volume'] if c in hist_df.columns]
+            cache_data["hist"] = hist_df[cols].tail(260).to_json()  # ~1 year of trading days
+        with open(_disk_cache_path(key), 'w') as f:
+            json.dump(cache_data, f)
+    except Exception:
+        pass  # best-effort caching
+
+def load_from_disk_cache(key):
+    """Load previously cached data from disk. Returns (info, hist, age_minutes) or None."""
+    try:
+        path = _disk_cache_path(key)
+        if not os.path.exists(path):
+            return None
+        with open(path, 'r') as f:
+            cache_data = json.load(f)
+        age_minutes = (time.time() - cache_data.get("timestamp", 0)) / 60
+        info = cache_data.get("info", {})
+        hist = None
+        if "hist" in cache_data:
+            hist = pd.read_json(cache_data["hist"])
+        return info, hist, age_minutes
+    except Exception:
+        return None
 
 # ============================================================================
 # CONFIGURATION & SETUP
@@ -320,40 +384,41 @@ def get_stock_info_cached(ticker_symbol):
     Cache metadata for 24 hours as it rarely changes.
     """
     try:
-        ticker = yf.Ticker(ticker_symbol, session=yf_session)
+        ticker = throttled_ticker(ticker_symbol)
         return ticker.info
     except Exception:
         return None
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_stock_history_cached(ticker_symbol, period="1y"):
     """
-    Cache historical data for 30 minutes with fallback periods.
+    Cache historical data for 2 hours with fallback periods.
     """
     try:
-        ticker = yf.Ticker(ticker_symbol, session=yf_session)
+        ticker = throttled_ticker(ticker_symbol)
         hist = ticker.history(period=period)
         
         # If 1y fails, try 6mo as fallback
         if (hist is None or hist.empty) and period == "1y":
+            time.sleep(_YF_MIN_INTERVAL)
             hist = ticker.history(period="6mo")
             
         # If still fails, try 1mo
         if (hist is None or hist.empty):
+            time.sleep(_YF_MIN_INTERVAL)
             hist = ticker.history(period="1mo")
             
         return hist
     except Exception:
         return None
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def get_current_price_safe(ticker_symbol):
     """
-    Lightning fast price fetcher using history(1d) instead of heavy .info.
-    Cache for 2 minutes.
+    Price fetcher using history(1d). Cache for 15 minutes.
     """
     try:
-        ticker = yf.Ticker(ticker_symbol, session=yf_session)
+        ticker = throttled_ticker(ticker_symbol)
         hist = ticker.history(period="1d")
         if not hist.empty:
             return float(hist['Close'].iloc[-1])
@@ -361,46 +426,79 @@ def get_current_price_safe(ticker_symbol):
     except Exception:
         return None
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
+def get_portfolio_prices(tickers_tuple):
+    """
+    Fetch current prices for multiple tickers in ONE API call.
+    Accepts a tuple (for Streamlit cache hashability).
+    Cache for 15 minutes.
+    """
+    if not tickers_tuple:
+        return {}
+    tickers_list = list(tickers_tuple)
+    try:
+        global _last_yf_call_time
+        elapsed = time.time() - _last_yf_call_time
+        if elapsed < _YF_MIN_INTERVAL:
+            time.sleep(_YF_MIN_INTERVAL - elapsed)
+        _last_yf_call_time = time.time()
+
+        if len(tickers_list) == 1:
+            data = yf.download(tickers_list, period="1d", session=yf_session, progress=False)
+            if data is not None and not data.empty:
+                return {tickers_list[0]: float(data['Close'].iloc[-1])}
+            return {}
+
+        data = yf.download(tickers_list, period="1d", group_by='ticker', session=yf_session, progress=False)
+        prices = {}
+        for t in tickers_list:
+            try:
+                prices[t] = float(data[t]['Close'].iloc[-1])
+            except Exception:
+                prices[t] = None
+        return prices
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=1800, show_spinner=False)
 def get_stock_data_safe(ticker_symbol):
     """
-    Fetch stock data with comprehensive error handling and multi-level caching.
+    Fetch stock data with comprehensive error handling, multi-level caching,
+    and disk-cache fallback for rate-limited responses.
     """
-    error_header = "⚠️ Yahoo Finance rate limit reached. Please wait a few minutes and click 'Refresh'."
+    rate_limit_msg = "⚠️ Yahoo Finance rate limit reached."
     
     try:
-        # 1. Initialize Ticker
-        ticker = yf.Ticker(ticker_symbol, session=yf_session)
-        
-        # 2. Get History (Often the most reliable)
+        # 1. Get History (Often the most reliable) — uses throttled_ticker internally
         hist = get_stock_history_cached(ticker_symbol)
         
-        # 3. Get Info (Prefer full info, fallback to fast_info)
+        # 2. Get Info (Prefer full info, fallback to fast_info) — uses throttled_ticker internally
         info = get_stock_info_cached(ticker_symbol)
         
-        # 4. Smart Fallback: Populate missing fields from fast_info or history
+        # 3. Smart Fallback: Populate missing fields from fast_info or history
         if not info:
             info = {}
             try:
-                # fast_info is a lighter way to get basic metrics
+                # fast_info is a property object — use getattr(), not .get()
+                ticker = throttled_ticker(ticker_symbol)
                 fi = ticker.fast_info
                 info.update({
-                    'currentPrice': fi.get('last_price'),
-                    'previousClose': fi.get('previous_close'),
-                    'open': fi.get('open'),
-                    'dayLow': fi.get('day_low'),
-                    'dayHigh': fi.get('day_high'),
-                    'fiftyTwoWeekLow': fi.get('year_low'),
-                    'fiftyTwoWeekHigh': fi.get('year_high'),
-                    'marketCap': fi.get('market_cap'),
-                    'volume': fi.get('last_volume'),
+                    'currentPrice': getattr(fi, 'last_price', None),
+                    'previousClose': getattr(fi, 'previous_close', None),
+                    'open': getattr(fi, 'open', None),
+                    'dayLow': getattr(fi, 'day_low', None),
+                    'dayHigh': getattr(fi, 'day_high', None),
+                    'fiftyTwoWeekLow': getattr(fi, 'year_low', None),
+                    'fiftyTwoWeekHigh': getattr(fi, 'year_high', None),
+                    'marketCap': getattr(fi, 'market_cap', None),
+                    'volume': getattr(fi, 'last_volume', None),
                     'symbol': ticker_symbol,
                     'longName': ticker_symbol
                 })
-            except:
+            except Exception:
                 pass
 
-        # 5. Ultimate Fallback: Extract from history DataFrame if still missing
+        # 4. Ultimate Fallback: Extract from history DataFrame if still missing
         if hist is not None and not hist.empty:
             last_row = hist.iloc[-1]
             prev_row = hist.iloc[-2] if len(hist) > 1 else last_row
@@ -421,21 +519,46 @@ def get_stock_data_safe(ticker_symbol):
             }
             info.update({k: v for k, v in fallback_updates.items() if info.get(k) is None or info.get(k) == 0})
 
+        # 5. Check if we got usable data
         if not info or ('currentPrice' not in info and 'regularMarketPrice' not in info):
-            return None, None, error_header
+            # === DISK CACHE FALLBACK ===
+            cached = load_from_disk_cache(ticker_symbol)
+            if cached:
+                cached_info, cached_hist, age_min = cached
+                if cached_info and cached_info.get('currentPrice'):
+                    if cached_hist is not None and not cached_hist.empty:
+                        cached_hist = calculate_indicators(cached_hist)
+                    stale_warning = f"⚠️ Using cached data from {age_min:.0f} minutes ago (Yahoo Finance rate-limited). Click 'Refresh' later."
+                    return cached_info, cached_hist, stale_warning
+            return None, None, rate_limit_msg + " Please wait a few minutes and click 'Refresh'."
             
         if hist is None or hist.empty:
+            # Save info to disk even without history
+            save_to_disk_cache(ticker_symbol, info, None)
             return info, None, "No historical data available"
             
         # Calculate technical indicators
         hist = calculate_indicators(hist)
         
+        # === SAVE TO DISK CACHE on success ===
+        save_to_disk_cache(ticker_symbol, info, hist)
+        
         return info, hist, None
         
     except Exception as e:
         error_msg = str(e).lower()
+        # === DISK CACHE FALLBACK on any error ===
+        cached = load_from_disk_cache(ticker_symbol)
+        if cached:
+            cached_info, cached_hist, age_min = cached
+            if cached_info and cached_info.get('currentPrice'):
+                if cached_hist is not None and not cached_hist.empty:
+                    cached_hist = calculate_indicators(cached_hist)
+                stale_warning = f"⚠️ Using cached data from {age_min:.0f} minutes ago (error: {error_msg[:60]}). Click 'Refresh' later."
+                return cached_info, cached_hist, stale_warning
+        
         if "too many requests" in error_msg or "rate limited" in error_msg:
-            return None, None, error_header
+            return None, None, rate_limit_msg + " Please wait a few minutes and click 'Refresh'."
         if "404" in error_msg or "no data found" in error_msg:
             return None, None, f"Ticker '{ticker_symbol}' not found."
         return None, None, f"Error: {error_msg}"
@@ -702,8 +825,12 @@ with st.spinner(f"📊 Fetching data for {asset}..."):
     info, hist, error = get_stock_data_safe(asset)
 
 if error:
-    st.error(f"⚠️ {error}")
-    st.stop()
+    # Show stale-data warnings as warnings (not errors), so the app continues
+    if "Using cached data" in str(error):
+        st.warning(error)
+    else:
+        st.error(f"⚠️ {error}")
+        st.stop()
 
 if info is None or hist is None:
     st.error(f"❌ Could not retrieve complete data for {asset}. Please try another ticker.")
@@ -1315,13 +1442,19 @@ with tab5:
             port_data = []
             total_pl = 0
             
+            # Batch-fetch prices for all portfolio tickers in ONE API call
+            other_tickers = tuple(sorted(set(
+                pos['asset'] for pos in st.session_state.portfolio
+                if pos['asset'] != asset
+            )))
+            batch_prices = get_portfolio_prices(other_tickers) if other_tickers else {}
+            
             for i, pos in enumerate(st.session_state.portfolio):
-                # Fetch current price using optimized cached function
+                # Use already-loaded info for the main asset, batch prices for others
                 if pos['asset'] == asset:
                     curr_p = info.get('currentPrice', pos['buy_price'])
                 else:
-                    curr_price_fetched = get_current_price_safe(pos['asset'])
-                    curr_p = curr_price_fetched if curr_price_fetched is not None else pos['buy_price']
+                    curr_p = batch_prices.get(pos['asset']) or pos['buy_price']
                 
                 investment = pos['qty'] * pos['buy_price']
                 current_val = pos['qty'] * curr_p
