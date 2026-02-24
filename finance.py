@@ -13,6 +13,8 @@ from io import BytesIO
 from deep_translator import GoogleTranslator
 from fpdf import FPDF
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 try:
     from groq import Groq
@@ -22,6 +24,24 @@ except ImportError as e:
     st.stop()
 import hashlib
 import hmac
+
+# ============================================================================
+# SESSION SETUP FOR API RESILIENCE
+# ============================================================================
+def get_yf_session():
+    """ Setup a requests session with retries for yfinance. """
+    session = requests.Session()
+    retry = Retry(
+        total=5,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('https://', adapter)
+    session.mount('http://', adapter)
+    return session
+
+yf_session = get_yf_session()
 
 # ============================================================================
 # CONFIGURATION & SETUP
@@ -300,7 +320,7 @@ def get_stock_info_cached(ticker_symbol):
     Cache metadata for 24 hours as it rarely changes.
     """
     try:
-        ticker = yf.Ticker(ticker_symbol)
+        ticker = yf.Ticker(ticker_symbol, session=yf_session)
         return ticker.info
     except Exception:
         return None
@@ -311,7 +331,7 @@ def get_stock_history_cached(ticker_symbol, period="1y"):
     Cache historical data for 30 minutes with fallback periods.
     """
     try:
-        ticker = yf.Ticker(ticker_symbol)
+        ticker = yf.Ticker(ticker_symbol, session=yf_session)
         hist = ticker.history(period=period)
         
         # If 1y fails, try 6mo as fallback
@@ -333,7 +353,7 @@ def get_current_price_safe(ticker_symbol):
     Cache for 2 minutes.
     """
     try:
-        ticker = yf.Ticker(ticker_symbol)
+        ticker = yf.Ticker(ticker_symbol, session=yf_session)
         hist = ticker.history(period="1d")
         if not hist.empty:
             return float(hist['Close'].iloc[-1])
@@ -346,11 +366,11 @@ def get_stock_data_safe(ticker_symbol):
     """
     Fetch stock data with comprehensive error handling and multi-level caching.
     """
-    error_header = "⚠️ Yahoo Finance rate limit reached. Please wait a few minutes."
+    error_header = "⚠️ Yahoo Finance rate limit reached. Please wait a few minutes and click 'Refresh'."
     
     try:
         # 1. Initialize Ticker
-        ticker = yf.Ticker(ticker_symbol)
+        ticker = yf.Ticker(ticker_symbol, session=yf_session)
         
         # 2. Get History (Often the most reliable)
         hist = get_stock_history_cached(ticker_symbol)
@@ -705,6 +725,11 @@ compare_ticker = st.sidebar.text_input(
     value="",
     help="Enter another ticker to compare performance (e.g., SPY, QQQ, BTC-USD)"
 ).upper()
+
+# Refresh button
+if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
 
 # Fetch comparison data
 compare_hist = None
