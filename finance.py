@@ -29,9 +29,22 @@ import hmac
 # ============================================================================
 # SESSION SETUP FOR API RESILIENCE
 # ============================================================================
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+
 def get_yf_session():
-    """ Setup a requests session with retries for yfinance. """
+    """ Setup a requests session with retries and browser headers for yfinance. """
     session = requests.Session()
+    session.headers.update({
+        'User-Agent': _BROWSER_UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+    })
     retry = Retry(
         total=5,
         backoff_factor=2,
@@ -104,6 +117,36 @@ def load_from_disk_cache(key):
         if "hist" in cache_data:
             hist = pd.read_json(cache_data["hist"])
         return info, hist, age_minutes
+    except Exception:
+        return None
+
+# ============================================================================
+# STOOQ FALLBACK - free historical data source (no API key required)
+# ============================================================================
+@st.cache_data(ttl=7200, show_spinner=False)
+def fetch_stooq_history(ticker_symbol):
+    """
+    Fetch historical OHLCV data from Stooq.com as a fallback when Yahoo is blocked.
+    Stooq is free, requires no API key, and provides daily data for US stocks.
+    """
+    try:
+        from io import StringIO
+        # Stooq uses ticker.US format for US stocks
+        stooq_ticker = ticker_symbol.replace('-', '.').upper()
+        # Try with .US suffix first (for US stocks), then without
+        for suffix in ['.US', '']:
+            url = f"https://stooq.com/q/d/l/?s={stooq_ticker}{suffix}&i=d"
+            response = requests.get(url, headers={'User-Agent': _BROWSER_UA}, timeout=15)
+            if response.status_code == 200 and len(response.text) > 100:
+                df = pd.read_csv(StringIO(response.text))
+                if not df.empty and 'Close' in df.columns:
+                    df['Date'] = pd.to_datetime(df['Date'])
+                    df = df.set_index('Date').sort_index()
+                    # Stooq sometimes returns newest-first, ensure ascending
+                    if len(df) > 1 and df.index[0] > df.index[-1]:
+                        df = df.iloc[::-1]
+                    return df
+        return None
     except Exception:
         return None
 
@@ -393,6 +436,7 @@ def get_stock_info_cached(ticker_symbol):
 def get_stock_history_cached(ticker_symbol, period="1y"):
     """
     Cache historical data for 2 hours with fallback periods.
+    Falls back to Stooq if Yahoo Finance is unavailable.
     """
     try:
         ticker = throttled_ticker(ticker_symbol)
@@ -407,10 +451,21 @@ def get_stock_history_cached(ticker_symbol, period="1y"):
         if (hist is None or hist.empty):
             time.sleep(_YF_MIN_INTERVAL)
             hist = ticker.history(period="1mo")
-            
-        return hist
+        
+        if hist is not None and not hist.empty:
+            return hist
     except Exception:
-        return None
+        pass
+    
+    # === STOOQ FALLBACK ===
+    try:
+        stooq_hist = fetch_stooq_history(ticker_symbol)
+        if stooq_hist is not None and not stooq_hist.empty:
+            return stooq_hist
+    except Exception:
+        pass
+    
+    return None
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_current_price_safe(ticker_symbol):
@@ -464,15 +519,15 @@ def get_portfolio_prices(tickers_tuple):
 def get_stock_data_safe(ticker_symbol):
     """
     Fetch stock data with comprehensive error handling, multi-level caching,
-    and disk-cache fallback for rate-limited responses.
+    Stooq fallback, and disk-cache fallback for rate-limited responses.
     """
     rate_limit_msg = "⚠️ Yahoo Finance rate limit reached."
     
     try:
-        # 1. Get History (Often the most reliable) — uses throttled_ticker internally
+        # 1. Get History — tries Yahoo first, then Stooq automatically
         hist = get_stock_history_cached(ticker_symbol)
         
-        # 2. Get Info (Prefer full info, fallback to fast_info) — uses throttled_ticker internally
+        # 2. Get Info (Prefer full info, fallback to fast_info)
         info = get_stock_info_cached(ticker_symbol)
         
         # 3. Smart Fallback: Populate missing fields from fast_info or history
