@@ -515,8 +515,8 @@ def get_portfolio_prices(tickers_tuple):
 def get_stock_data_safe(ticker_symbol):
     """
     Fetch stock data with multi-source resilience.
-    Priority: Session cache → Yahoo Finance (download) → Yahoo Finance (ticker)
-              → Stooq → Disk cache
+    Priority: Session cache → Fresh disk cache (< 30 min) → Yahoo Finance
+              → Stooq → Stale disk cache (any age)
     Only successful results are cached (failures are NEVER cached).
     """
     # === 1. CHECK SESSION CACHE (instant, no API call) ===
@@ -525,11 +525,23 @@ def get_stock_data_safe(ticker_symbol):
     if cached:
         return cached
 
+    # === 2. CHECK FRESH DISK CACHE (serve without API calls if < 30 min old) ===
+    # This prevents the slow failure loop when Yahoo is actively rate-limiting.
+    disk_cached = load_from_disk_cache(ticker_symbol)
+    if disk_cached:
+        cached_info, cached_hist, age_min = disk_cached
+        if cached_info and cached_info.get('currentPrice') and age_min < 30:
+            if cached_hist is not None and not cached_hist.empty:
+                cached_hist = calculate_indicators(cached_hist)
+            result = (cached_info, cached_hist, None)
+            _set_session_cache(cache_key, result)
+            return result
+
     hist = None
     info = None
     data_source = None
 
-    # === 2. TRY YAHOO FINANCE (download + ticker) ===
+    # === 3. TRY YAHOO FINANCE (download + ticker) ===
     yahoo_hist = _try_yahoo_history(ticker_symbol)
     if yahoo_hist is not None and not yahoo_hist.empty:
         hist = yahoo_hist
@@ -539,14 +551,14 @@ def get_stock_data_safe(ticker_symbol):
     if yahoo_info:
         info = yahoo_info
 
-    # === 3. TRY STOOQ FALLBACK (if Yahoo history failed) ===
+    # === 4. TRY STOOQ FALLBACK (if Yahoo history failed) ===
     if hist is None:
         stooq_hist = fetch_stooq_history(ticker_symbol)
         if stooq_hist is not None and not stooq_hist.empty:
             hist = stooq_hist
             data_source = "stooq"
 
-    # === 4. BUILD INFO FROM HISTORY (if Yahoo info failed but we have history) ===
+    # === 5. BUILD INFO FROM HISTORY (if Yahoo info failed but we have history) ===
     if hist is not None and not hist.empty:
         history_info = _build_info_from_history(ticker_symbol, hist)
         if info:
@@ -556,7 +568,7 @@ def get_stock_data_safe(ticker_symbol):
         else:
             info = history_info
 
-    # === 5. CHECK IF WE HAVE USABLE DATA ===
+    # === 6. CHECK IF WE HAVE USABLE DATA ===
     if info and ('currentPrice' in info or 'regularMarketPrice' in info):
         if hist is not None and not hist.empty:
             hist = calculate_indicators(hist)
@@ -569,8 +581,7 @@ def get_stock_data_safe(ticker_symbol):
         _set_session_cache(cache_key, result)
         return result
 
-    # === 6. DISK CACHE FALLBACK (last resort) ===
-    disk_cached = load_from_disk_cache(ticker_symbol)
+    # === 7. STALE DISK CACHE FALLBACK (any age, last resort) ===
     if disk_cached:
         cached_info, cached_hist, age_min = disk_cached
         if cached_info and cached_info.get('currentPrice'):
