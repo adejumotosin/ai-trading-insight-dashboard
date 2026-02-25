@@ -22,7 +22,7 @@ from bs4 import BeautifulSoup
 try:
     from groq import Groq
 except ImportError as e:
-    st.error(f"\u274c Groq import error: {e}")
+    st.error(f"❌ Groq import error: {e}")
     st.info("If you are on Streamlit Cloud, please wait for 'Processing dependencies...' to finish or click 'Reboot App'.")
     st.stop()
 import hashlib
@@ -154,7 +154,7 @@ def fetch_stooq_history(ticker_symbol):
 
 st.set_page_config(
     page_title="AI Trading Dashboard",
-    page_icon="\ud83d\udcca",
+    page_icon="📊",
     layout="wide"
 )
 
@@ -210,7 +210,7 @@ try:
     groq_api_key = st.secrets["GROQ_API_KEY"]
     client = Groq(api_key=groq_api_key)
 except Exception:
-    st.error("\u274c Groq API Key is missing. Please set it in your Streamlit secrets as 'GROQ_API_KEY'.")
+    st.error("❌ Groq API Key is missing. Please set it in your Streamlit secrets as 'GROQ_API_KEY'.")
     st.stop()
 
 # Initialize session state
@@ -354,7 +354,7 @@ def safe_int(val, default=0):
         return default
 
 # ============================================================================
-# DATA FETCHING FUNCTIONS \u2014 SUCCESS-ONLY CACHING
+# DATA FETCHING FUNCTIONS — SUCCESS-ONLY CACHING
 # ============================================================================
 
 def _cache_key(prefix, ticker, extra=""):
@@ -373,13 +373,13 @@ def _set_session_cache(key, data):
     st.session_state[key] = {"data": data, "ts": time.time()}
 
 
-# FIX 3: Improved history fetcher \u2014 tries yf.download first (more reliable),
+# FIX 3: Improved history fetcher — tries yf.download first (more reliable),
 # then falls back to Ticker.history
 def _try_yahoo_history(ticker_symbol, period="1y"):
     """Try multiple yfinance methods to fetch history. Returns DataFrame or None."""
     global _last_yf_call_time
 
-    # Method 1: yf.download \u2014 uses a different internal code path, often works
+    # Method 1: yf.download — uses a different internal code path, often works
     # when Ticker.history is blocked
     try:
         elapsed = time.time() - _last_yf_call_time
@@ -515,8 +515,8 @@ def get_portfolio_prices(tickers_tuple):
 def get_stock_data_safe(ticker_symbol):
     """
     Fetch stock data with multi-source resilience.
-    Priority: Session cache \u2192 Yahoo Finance (download) \u2192 Yahoo Finance (ticker)
-              \u2192 Stooq \u2192 Disk cache
+    Priority: Session cache → Yahoo Finance (download) → Yahoo Finance (ticker)
+              → Stooq → Disk cache
     Only successful results are cached (failures are NEVER cached).
     """
     # === 1. CHECK SESSION CACHE (instant, no API call) ===
@@ -564,7 +564,7 @@ def get_stock_data_safe(ticker_symbol):
 
         warning = None
         if data_source == "stooq":
-            warning = "\u26a0\ufe0f Using Stooq data (Yahoo Finance unavailable). Some features may be limited."
+            warning = "⚠️ Using Stooq data (Yahoo Finance unavailable). Some features may be limited."
         result = (info, hist, warning)
         _set_session_cache(cache_key, result)
         return result
@@ -576,10 +576,10 @@ def get_stock_data_safe(ticker_symbol):
         if cached_info and cached_info.get('currentPrice'):
             if cached_hist is not None and not cached_hist.empty:
                 cached_hist = calculate_indicators(cached_hist)
-            stale_warning = f"\u26a0\ufe0f Using cached data from {age_min:.0f} minutes ago (Yahoo Finance rate-limited). Click 'Refresh' later."
+            stale_warning = f"⚠️ Using cached data from {age_min:.0f} minutes ago (Yahoo Finance rate-limited). Click 'Refresh' later."
             return cached_info, cached_hist, stale_warning
 
-    return None, None, "\u26a0\ufe0f Could not fetch data from any source. Yahoo Finance is rate-limited and no cached data is available. Please try again in a few minutes."
+    return None, None, "⚠️ Could not fetch data from any source. Yahoo Finance is rate-limited and no cached data is available. Please try again in a few minutes."
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -605,7 +605,7 @@ def generate_ai_insight(prompt, insight_type="general"):
     """Generates insights using the Groq model and parses the JSON response."""
     can_proceed, wait_time = check_rate_limit(f'groq_{insight_type}', max_calls=5, window_minutes=5)
     if not can_proceed:
-        st.error(f"\u23f3 Rate limit reached. Please wait {wait_time} seconds before trying again.")
+        st.error(f"⏳ Rate limit reached. Please wait {wait_time} seconds before trying again.")
         return None, None
     try:
         chat_completion = client.chat.completions.create(
@@ -616,10 +616,10 @@ def generate_ai_insight(prompt, insight_type="general"):
         response_text = chat_completion.choices[0].message.content.strip()
         parsed_data = parse_ai_response(response_text)
         if parsed_data is None:
-            st.warning("\u26a0\ufe0f AI did not return valid JSON. Showing raw response.")
+            st.warning("⚠️ AI did not return valid JSON. Showing raw response.")
         return parsed_data, response_text
     except Exception as e:
-        st.error(f"\u274c Groq API error: {e}")
+        st.error(f"❌ Groq API error: {e}")
         return None, None
 
 
@@ -700,18 +700,18 @@ def verify_user_simple(email):
 # MAIN APPLICATION - SETUP & AUTHENTICATION
 # ============================================================================
 
-st.title("\ud83d\udcca AI-Powered Trading & Market Insight Dashboard")
+st.title("📊 AI-Powered Trading & Market Insight Dashboard")
 
 # Sidebar - Authentication
-st.sidebar.header("\ud83d\udd10 User Authentication")
+st.sidebar.header("🔐 User Authentication")
 
-if st.sidebar.button("\ud83d\udd04 Clear Cache"):
+if st.sidebar.button("🔄 Clear Cache"):
     st.cache_data.clear()
     # Also clear session-state data cache entries
     keys_to_del = [k for k in st.session_state if k.startswith("_yf_")]
     for k in keys_to_del:
         del st.session_state[k]
-    st.success("\u2705 Cache cleared!")
+    st.success("✅ Cache cleared!")
 
 user_email = st.sidebar.text_input(
     "Enter your email:",
@@ -723,23 +723,23 @@ if user_email:
     st.session_state.user_email = user_email
     if verify_user_simple(user_email):
         st.session_state.user_authenticated = True
-        st.sidebar.success(f"\u2705 Welcome, {user_email}!")
+        st.sidebar.success(f"✅ Welcome, {user_email}!")
     else:
         st.session_state.user_authenticated = False
-        st.sidebar.error("\u274c Access denied. Please contact admin.")
+        st.sidebar.error("❌ Access denied. Please contact admin.")
         st.stop()
 else:
-    st.sidebar.warning("\u26a0\ufe0f Please enter your email to continue.")
+    st.sidebar.warning("⚠️ Please enter your email to continue.")
     st.stop()
 
 lang = st.sidebar.selectbox(
-    "\ud83c\udf0d Choose Output Language",
+    "🌍 Choose Output Language",
     ["English", "French", "Spanish", "German", "Chinese"],
     key="language_selector"
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("\ud83d\udcc8 Asset Selection")
+st.sidebar.subheader("📈 Asset Selection")
 
 asset_input = st.sidebar.text_input(
     "Enter Ticker Symbol:",
@@ -749,11 +749,11 @@ asset_input = st.sidebar.text_input(
 
 is_valid, error_msg = validate_ticker(asset_input)
 if not is_valid:
-    st.sidebar.error(f"\u274c {error_msg}")
+    st.sidebar.error(f"❌ {error_msg}")
     st.stop()
 
 asset = asset_input
-st.sidebar.success(f"\u2705 Analyzing: **{asset}**")
+st.sidebar.success(f"✅ Analyzing: **{asset}**")
 
 period_options = {
     "1 Month": "1mo",
@@ -765,27 +765,27 @@ period_options = {
 }
 
 selected_period = st.sidebar.selectbox(
-    "\ud83d\udcc5 Select Time Period",
+    "📅 Select Time Period",
     options=list(period_options.keys()),
     index=3
 )
 
 # Fetch stock data
-with st.spinner(f"\ud83d\udcca Fetching data for {asset}..."):
+with st.spinner(f"📊 Fetching data for {asset}..."):
     info, hist, fetch_warning = get_stock_data_safe(asset)
 
-# FIX 4: Graceful degradation \u2014 if Yahoo + Stooq both failed, try Stooq directly
+# FIX 4: Graceful degradation — if Yahoo + Stooq both failed, try Stooq directly
 # as a last-resort before giving up entirely
 if info is None or hist is None:
-    with st.spinner("\ud83d\udd04 Trying alternative data source..."):
+    with st.spinner("🔄 Trying alternative data source..."):
         fallback_hist = fetch_stooq_history(asset)
         if fallback_hist is not None and not fallback_hist.empty:
             hist = calculate_indicators(fallback_hist)
             info = _build_info_from_history(asset, hist)
-            fetch_warning = "\u26a0\ufe0f Using Stooq fallback data. Fundamental metrics (P/E, Market Cap, etc.) unavailable."
+            fetch_warning = "⚠️ Using Stooq fallback data. Fundamental metrics (P/E, Market Cap, etc.) unavailable."
         else:
             st.error(
-                f"\u274c Could not retrieve data for **{asset}** from Yahoo Finance or Stooq. "
+                f"❌ Could not retrieve data for **{asset}** from Yahoo Finance or Stooq. "
                 "This is usually a temporary rate-limit. Please wait 2-3 minutes and try again, "
                 "or click **Clear Cache** in the sidebar and refresh."
             )
@@ -799,7 +799,7 @@ if fetch_warning:
 
 # Technical Indicators Selection
 st.sidebar.markdown("---")
-st.sidebar.subheader("\ud83d\udee0\ufe0f Technical Indicators")
+st.sidebar.subheader("🛠️ Technical Indicators")
 show_sma = st.sidebar.checkbox("Show SMA (50/200)", value=False)
 show_ema = st.sidebar.checkbox("Show EMA (20)", value=True)
 show_rsi = st.sidebar.checkbox("Show RSI Chart", value=True)
@@ -807,14 +807,14 @@ show_macd = st.sidebar.checkbox("Show MACD Chart", value=True)
 
 # Comparison Ticker
 st.sidebar.markdown("---")
-st.sidebar.subheader("\u2696\ufe0f Compare Asset")
+st.sidebar.subheader("⚖️ Compare Asset")
 compare_ticker = st.sidebar.text_input(
     "Compare with (Optional):",
     value="",
     help="Enter another ticker to compare performance (e.g., SPY, QQQ, BTC-USD)"
 ).upper()
 
-if st.sidebar.button("\ud83d\udd04 Refresh Data", use_container_width=True):
+if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
     st.cache_data.clear()
     keys_to_del = [k for k in st.session_state if k.startswith("_yf_")]
     for k in keys_to_del:
@@ -824,22 +824,22 @@ if st.sidebar.button("\ud83d\udd04 Refresh Data", use_container_width=True):
 # Fetch comparison data
 compare_hist = None
 if compare_ticker:
-    with st.spinner(f"\u2696\ufe0f Fetching comparison data for {compare_ticker}..."):
+    with st.spinner(f"⚖️ Fetching comparison data for {compare_ticker}..."):
         _, compare_hist, compare_error = get_stock_data_safe(compare_ticker)
         if compare_error and "rate-limited" in str(compare_error):
-            st.sidebar.warning(f"\u26a0\ufe0f Comparison error: {compare_error}")
+            st.sidebar.warning(f"⚠️ Comparison error: {compare_error}")
             compare_hist = None
 
-st.success(f"\u2705 Successfully loaded data for **{info.get('longName', asset)}**")
+st.success(f"✅ Successfully loaded data for **{info.get('longName', asset)}**")
 
 # ============================================================================
 # DATA VISUALIZATION
 # ============================================================================
 
 st.markdown("---")
-st.header(f"\ud83d\udcc8 Market Analysis for {asset}")
+st.header(f"📈 Market Analysis for {asset}")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["\ud83d\udcca Charts", "\ud83d\udccb Metrics", "\ud83e\udde0 AI Insights", "\ud83d\udcf0 News Sentiment", "\ud83d\udcbc Portfolio Simulator"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Charts", "📋 Metrics", "🧠 AI Insights", "📰 News Sentiment", "💼 Portfolio Simulator"])
 
 # ============================================================================
 # TAB 1: CHARTS
@@ -920,7 +920,7 @@ with tab1:
 
         st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("\ud83d\udcca Trading Volume")
+    st.subheader("📊 Trading Volume")
     volume_fig = go.Figure()
     volume_fig.add_trace(go.Bar(
         x=hist.index, y=hist['Volume'], name='Volume',
@@ -935,7 +935,7 @@ with tab1:
 
     if show_rsi or show_macd:
         st.markdown("---")
-        st.header("\ud83d\udcc9 Technical Oscillators")
+        st.header("📉 Technical Oscillators")
         osc_col1, osc_col2 = st.columns(2)
 
         with osc_col1:
@@ -971,7 +971,7 @@ with tab1:
             elif show_macd:
                 st.info("MACD requires more historical data points.")
 
-    st.subheader("\ud83d\udcc8 Price Statistics")
+    st.subheader("📈 Price Statistics")
     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
 
     with stat_col1:
@@ -994,7 +994,7 @@ with tab1:
 # TAB 2: KEY METRICS
 # ============================================================================
 with tab2:
-    st.subheader("\ud83d\udd27 Fundamental Metrics")
+    st.subheader("🔧 Fundamental Metrics")
 
     key_metrics = {
         "Current Price": f"${safe_float(info.get('currentPrice')):.2f}",
@@ -1016,17 +1016,17 @@ with tab2:
     metrics_list = list(key_metrics.items())
 
     with col1:
-        st.markdown("#### \ud83d\udcb0 Price Information")
+        st.markdown("#### 💰 Price Information")
         for key, value in metrics_list[:7]:
             st.markdown(f"**{key}:** {value}")
 
     with col2:
-        st.markdown("#### \ud83d\udcca Company Fundamentals")
+        st.markdown("#### 📊 Company Fundamentals")
         for key, value in metrics_list[7:]:
             st.markdown(f"**{key}:** {value}")
 
     st.markdown("---")
-    st.subheader("\u2139\ufe0f Company Information")
+    st.subheader("ℹ️ Company Information")
 
     info_col1, info_col2 = st.columns(2)
 
@@ -1043,7 +1043,7 @@ with tab2:
         st.markdown(f"**Currency:** {info.get('currency', 'N/A')}")
 
     if info.get('longBusinessSummary'):
-        with st.expander("\ud83d\udcc4 Business Summary"):
+        with st.expander("📄 Business Summary"):
             st.write(info.get('longBusinessSummary'))
 
     st.markdown("---")
@@ -1051,7 +1051,7 @@ with tab2:
     csv_data = metrics_df.to_csv(index=False).encode('utf-8')
 
     st.download_button(
-        label="\ud83d\udce5 Download Metrics as CSV",
+        label="📥 Download Metrics as CSV",
         data=csv_data,
         file_name=f"{asset}_metrics_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
@@ -1062,11 +1062,11 @@ with tab2:
 # TAB 3: AI INSIGHTS
 # ============================================================================
 with tab3:
-    st.subheader("\ud83e\udde0 AI-Powered Trading Analysis")
-    st.info("\ud83d\udca1 **Tip:** AI analysis is rate-limited to 5 requests per 5 minutes.")
+    st.subheader("🧠 AI-Powered Trading Analysis")
+    st.info("💡 **Tip:** AI analysis is rate-limited to 5 requests per 5 minutes.")
 
-    if st.button("\ud83d\ude80 Generate AI Insight", key="generate_insight_btn", type="primary"):
-        with st.spinner("\ud83e\udd16 AI is analyzing the data... This may take 10-20 seconds."):
+    if st.button("🚀 Generate AI Insight", key="generate_insight_btn", type="primary"):
+        with st.spinner("🤖 AI is analyzing the data... This may take 10-20 seconds."):
             rsi_val = hist['RSI'].iloc[-1] if 'RSI' in hist.columns else "N/A"
             macd_val = hist['MACD'].iloc[-1] if 'MACD' in hist.columns else "N/A"
             sma_50 = hist['SMA_50'].iloc[-1] if 'SMA_50' in hist.columns else "N/A"
@@ -1104,9 +1104,9 @@ Return ONLY a valid JSON object with these exact keys:
             if insight_data:
                 st.session_state.insight_data = insight_data
                 st.session_state.raw_output = raw_output
-                st.success("\u2705 AI Analysis Complete!")
+                st.success("✅ AI Analysis Complete!")
             else:
-                st.error("\u274c Failed to generate insights. Please try again.")
+                st.error("❌ Failed to generate insights. Please try again.")
 
     if 'insight_data' in st.session_state and st.session_state.insight_data:
         insight_data = st.session_state.insight_data
@@ -1114,7 +1114,7 @@ Return ONLY a valid JSON object with these exact keys:
 
         metric_col1, metric_col2, metric_col3 = st.columns(3)
         verdict = insight_data.get("verdict", "N/A")
-        verdict_color = {"Buy": "\ud83d\udfe2", "Hold": "\ud83d\udfe1", "Sell": "\ud83d\udd34"}.get(verdict.split()[0], "\u26aa")
+        verdict_color = {"Buy": "🟢", "Hold": "🟡", "Sell": "🔴"}.get(verdict.split()[0], "⚪")
 
         with metric_col1:
             st.metric(label="AI Verdict", value=f"{verdict_color} {translate_text(verdict, lang)}")
@@ -1122,61 +1122,61 @@ Return ONLY a valid JSON object with these exact keys:
             st.metric(label="Best Strategy For", value=translate_text(insight_data.get("best_for", "N/A"), lang))
         with metric_col3:
             risk = insight_data.get("risk_score", "N/A")
-            risk_emoji = {"Low": "\ud83d\udfe2", "Medium": "\ud83d\udfe1", "High": "\ud83d\udd34"}.get(risk, "\u26aa")
+            risk_emoji = {"Low": "🟢", "Medium": "🟡", "High": "🔴"}.get(risk, "⚪")
             st.metric(label="Risk Level", value=f"{risk_emoji} {translate_text(risk, lang)}")
 
-        st.markdown("### \ud83d\udcdd Executive Summary")
+        st.markdown("### 📝 Executive Summary")
         st.info(translate_text(insight_data.get("executive_summary", ""), lang))
 
-        st.markdown("### \u2696\ufe0f Pros & Cons Analysis")
+        st.markdown("### ⚖️ Pros & Cons Analysis")
         pros_col, cons_col = st.columns(2)
 
         with pros_col:
-            st.markdown("#### \u2705 Strengths")
+            st.markdown("#### ✅ Strengths")
             for pro in insight_data.get("pros", []):
-                st.success(f"\u2713 {translate_text(pro, lang)}")
+                st.success(f"✓ {translate_text(pro, lang)}")
 
         with cons_col:
-            st.markdown("#### \u26a0\ufe0f Weaknesses")
+            st.markdown("#### ⚠️ Weaknesses")
             for con in insight_data.get("cons", []):
-                st.warning(f"\u2717 {translate_text(con, lang)}")
+                st.warning(f"✗ {translate_text(con, lang)}")
 
-        st.markdown("### \ud83d\udca1 Trading Strategy Suggestions")
+        st.markdown("### 💡 Trading Strategy Suggestions")
         for idx, strategy in enumerate(insight_data.get("strategy_suggestions", []), 1):
             st.markdown(f"**{idx}.** {translate_text(strategy, lang)}")
 
-        st.markdown("### \ud83c\udfaf Final Recommendation")
+        st.markdown("### 🎯 Final Recommendation")
         recommendation_text = (
             f"**{translate_text(insight_data.get('recommendation', ''), lang)}**\n\n"
             f"{translate_text(insight_data.get('bottom_line', ''), lang)}"
         )
         st.success(recommendation_text)
 
-        with st.expander("\ud83d\udd0d View Raw AI Response (Technical)"):
+        with st.expander("🔍 View Raw AI Response (Technical)"):
             st.code(st.session_state.get('raw_output', 'No raw output available.'), language='json')
     else:
-        st.info("\ud83d\udc46 Click the button above to generate AI-powered insights for this asset.")
+        st.info("👆 Click the button above to generate AI-powered insights for this asset.")
 
 # ============================================================================
 # TAB 4: NEWS SENTIMENT
 # ============================================================================
 with tab4:
-    st.subheader("\ud83d\udcf0 News Sentiment Analysis")
-    st.info("\ud83d\udcf0 Fetching latest news headlines from Google News...")
+    st.subheader("📰 News Sentiment Analysis")
+    st.info("📰 Fetching latest news headlines from Google News...")
 
     with st.spinner("Searching for news..."):
         headlines = fetch_google_news_headlines(asset)
 
     if headlines:
-        st.success(f"\u2705 Found {len(headlines)} recent headlines")
-        st.markdown("### \ud83d\udcd1 Latest Headlines")
+        st.success(f"✅ Found {len(headlines)} recent headlines")
+        st.markdown("### 📑 Latest Headlines")
         for idx, headline in enumerate(headlines, 1):
             st.markdown(f"{idx}. {headline}")
 
         st.markdown("---")
 
-        if st.button("\ud83d\udd0d Analyze News Sentiment", key="analyze_sentiment_btn", type="primary"):
-            with st.spinner("\ud83e\udd16 AI is analyzing news sentiment..."):
+        if st.button("🔍 Analyze News Sentiment", key="analyze_sentiment_btn", type="primary"):
+            with st.spinner("🤖 AI is analyzing news sentiment..."):
                 sentiment_prompt = f"""
 Analyze the sentiment of these news headlines for {asset}:
 
@@ -1196,45 +1196,45 @@ Return ONLY a valid JSON object with these exact keys:
                 if sentiment_data:
                     st.session_state.sentiment_data = sentiment_data
                     st.session_state.sentiment_raw = sentiment_raw
-                    st.success("\u2705 Sentiment Analysis Complete!")
+                    st.success("✅ Sentiment Analysis Complete!")
                 else:
-                    st.error("\u274c Failed to analyze sentiment. Please try again.")
+                    st.error("❌ Failed to analyze sentiment. Please try again.")
 
         if 'sentiment_data' in st.session_state and st.session_state.sentiment_data:
             sentiment_data = st.session_state.sentiment_data
             st.markdown("---")
-            st.markdown("### \ud83c\udfad Sentiment Analysis Results")
+            st.markdown("### 🎭 Sentiment Analysis Results")
 
             sent_col1, sent_col2 = st.columns(2)
             with sent_col1:
                 sentiment = sentiment_data.get("sentiment", "N/A")
-                sentiment_emoji = {"Positive": "\ud83d\ude0a", "Negative": "\ud83d\ude1f", "Neutral": "\ud83d\ude10", "Mixed": "\ud83e\udd14"}.get(sentiment.split()[0], "\u2753")
+                sentiment_emoji = {"Positive": "😊", "Negative": "😟", "Neutral": "😐", "Mixed": "🤔"}.get(sentiment.split()[0], "❓")
                 st.metric(label="Overall Sentiment", value=f"{sentiment_emoji} {translate_text(sentiment, lang)}")
             with sent_col2:
                 st.metric(label="Confidence Level", value=translate_text(sentiment_data.get("confidence", "N/A"), lang))
 
-            st.markdown("#### \ud83d\udcca Analysis Summary")
+            st.markdown("#### 📊 Analysis Summary")
             st.info(translate_text(sentiment_data.get("summary", ""), lang))
 
             if sentiment_data.get("key_themes"):
-                st.markdown("#### \ud83d\udd11 Key Themes Identified")
+                st.markdown("#### 🔑 Key Themes Identified")
                 for theme in sentiment_data.get("key_themes", []):
-                    st.markdown(f"\u2022 {translate_text(theme, lang)}")
+                    st.markdown(f"• {translate_text(theme, lang)}")
 
             if sentiment_data.get("outlook"):
-                st.markdown("#### \ud83d\udd2e Short-term Outlook")
+                st.markdown("#### 🔮 Short-term Outlook")
                 st.success(translate_text(sentiment_data.get("outlook", ""), lang))
 
-            with st.expander("\ud83d\udd0d View Raw Sentiment Analysis"):
+            with st.expander("🔍 View Raw Sentiment Analysis"):
                 st.code(st.session_state.get('sentiment_raw', 'No raw output available.'), language='json')
     else:
-        st.warning("\u26a0\ufe0f No recent news headlines found for this asset.")
+        st.warning("⚠️ No recent news headlines found for this asset.")
 
 # ============================================================================
 # TAB 5: PORTFOLIO SIMULATOR
 # ============================================================================
 with tab5:
-    st.subheader("\ud83d\udcbc Paper Trading Portfolio Simulator")
+    st.subheader("💼 Paper Trading Portfolio Simulator")
     st.markdown("Track your simulated trades and monitor potential P&L based on current market prices.")
 
     if 'portfolio' not in st.session_state:
@@ -1243,7 +1243,7 @@ with tab5:
     portfolio_col1, portfolio_col2 = st.columns([1, 2])
 
     with portfolio_col1:
-        st.markdown("##### \ud83d\udce5 Add New Position")
+        st.markdown("##### 📥 Add New Position")
         with st.form("portfolio_form"):
             p_asset = st.text_input("Ticker:", value=asset).upper()
             p_qty = st.number_input("Quantity:", min_value=0.01, value=10.0, step=1.0)
@@ -1261,10 +1261,10 @@ with tab5:
                     "date": datetime.now().strftime("%Y-%m-%d %H:%M")
                 }
                 st.session_state.portfolio.append(new_pos)
-                st.success(f"\u2705 Added {p_qty} shares of {p_asset} to portfolio!")
+                st.success(f"✅ Added {p_qty} shares of {p_asset} to portfolio!")
 
     with portfolio_col2:
-        st.markdown("##### \ud83d\udcb9 Current Holdings")
+        st.markdown("##### 💹 Current Holdings")
         if st.session_state.portfolio:
             port_data = []
             total_pl = 0
@@ -1307,7 +1307,7 @@ with tab5:
             with sum_col1:
                 st.metric("Total Portfolio P&L", value=f"${total_pl:.2f}", delta=f"{total_pl_pct:.2f}%")
             with sum_col2:
-                if st.button("\ud83d\uddd1\ufe0f Clear Portfolio"):
+                if st.button("🗑️ Clear Portfolio"):
                     st.session_state.portfolio = []
                     st.rerun()
         else:
@@ -1318,20 +1318,20 @@ with tab5:
 # ============================================================================
 
 st.markdown("---")
-st.header("\ud83d\udce4 Export & Download Reports")
+st.header("📤 Export & Download Reports")
 
 export_col1, export_col2 = st.columns(2)
 
 with export_col1:
-    st.markdown("### \ud83d\udcc4 PDF Report")
-    if st.button("\ud83d\udcc4 Generate PDF Report", key="generate_pdf_btn"):
+    st.markdown("### 📄 PDF Report")
+    if st.button("📄 Generate PDF Report", key="generate_pdf_btn"):
         has_insight = 'insight_data' in st.session_state and st.session_state.insight_data
         has_sentiment = 'sentiment_data' in st.session_state and st.session_state.sentiment_data
 
         if not has_insight and not has_sentiment:
-            st.warning("\u26a0\ufe0f Please generate AI insights and sentiment analysis first.")
+            st.warning("⚠️ Please generate AI insights and sentiment analysis first.")
         else:
-            with st.spinner("\ud83d\udcdd Generating PDF report..."):
+            with st.spinner("📝 Generating PDF report..."):
                 pdf_data = create_pdf_report(
                     asset, key_metrics,
                     st.session_state.get('insight_data'),
@@ -1339,18 +1339,18 @@ with export_col1:
                 )
                 if pdf_data:
                     st.download_button(
-                        label="\u2b07\ufe0f Download PDF Report",
+                        label="⬇️ Download PDF Report",
                         data=pdf_data,
                         file_name=f"{asset}_AI_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                         mime="application/pdf",
                         key="download_pdf_btn"
                     )
-                    st.success("\u2705 PDF report generated successfully!")
+                    st.success("✅ PDF report generated successfully!")
                 else:
-                    st.error("\u274c Failed to generate PDF report.")
+                    st.error("❌ Failed to generate PDF report.")
 
 with export_col2:
-    st.markdown("### \ud83d\udcca Excel Data Export")
+    st.markdown("### 📊 Excel Data Export")
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         hist_export = hist.copy()
@@ -1368,7 +1368,7 @@ with export_col2:
 
     excel_data = output.getvalue()
     st.download_button(
-        label="\ud83d\udce5 Download Excel File",
+        label="📥 Download Excel File",
         data=excel_data,
         file_name=f"{asset}_complete_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1382,5 +1382,8 @@ with export_col2:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: gray; padding: 20px;'>
-    <p>\ud83d\udcca <b>AI Trading Dashboard</b> | Powered by Groq AI & Yahoo Finance</p>
-    <p style
+    <p>📊 <b>AI Trading Dashboard</b> | Powered by Groq AI & Yahoo Finance</p>
+    <p style='font-size: 12px;'>⚠️ Disclaimer: This tool is for informational purposes only. Not financial advice. Always do your own research.</p>
+    <p style='font-size: 12px;'>Generated on {}</p>
+</div>
+""".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')), unsafe_allow_html=True)
