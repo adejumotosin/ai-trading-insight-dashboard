@@ -1,6 +1,5 @@
 streamlit
-yfinance>=0.2.54
-appdirs
+yfinance>=1.2.0
 plotly
 fpdf
 requests

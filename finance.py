@@ -124,28 +124,70 @@ def load_from_disk_cache(key):
 # ============================================================================
 # STOOQ FALLBACK - free historical data source (no API key required)
 # ============================================================================
+def generate_simulated_data(ticker_symbol):
+    """Generate realistic-looking fake data when all APIs fail."""
+    import numpy as np
+    
+    # Deterministic "price" based on ticker letters
+    base_price = sum(ord(c) for c in ticker_symbol) % 500 + 50
+    
+    # Create 260 days of history
+    dates = pd.date_range(end=datetime.now(), periods=260)
+    
+    # Random walk
+    changes = np.random.normal(0, 0.02, 260)
+    prices = base_price * (1 + changes).cumprod()
+    
+    hist = pd.DataFrame({
+        'Open': prices * 0.995,
+        'High': prices * 1.01,
+        'Low': prices * 0.99,
+        'Close': prices,
+        'Volume': np.random.randint(1000000, 10000000, 260)
+    }, index=dates)
+    
+    info = {
+        'currentPrice': float(prices[-1]),
+        'regularMarketPrice': float(prices[-1]),
+        'previousClose': float(prices[-2]),
+        'open': float(prices[-1] * 0.998),
+        'dayLow': float(prices[-1] * 0.985),
+        'dayHigh': float(prices[-1] * 1.012),
+        'fiftyTwoWeekLow': float(prices.min()),
+        'fiftyTwoWeekHigh': float(prices.max()),
+        'volume': int(hist['Volume'].iloc[-1]),
+        'averageVolume': int(hist['Volume'].mean()),
+        'longName': f"{ticker_symbol} (SIMULATED)",
+        'symbol': ticker_symbol,
+        'note': '⚠️ Using Simulated Data (APIs Offline)'
+    }
+    
+    return info, hist
+
+# ============================================================================
+# STOOQ FALLBACK - free historical data source (no API key required)
+# ============================================================================
 @st.cache_data(ttl=7200, show_spinner=False)
 def fetch_stooq_history(ticker_symbol):
     """
     Fetch historical OHLCV data from Stooq.com as a fallback when Yahoo is blocked.
-    Stooq is free, requires no API key, and provides daily data for US stocks.
     """
     try:
         from io import StringIO
         stooq_ticker = ticker_symbol.replace('-', '.').upper()
+        # Common US stocks usually end in .US on Stooq
         for suffix in ['.US', '']:
             url = f"https://stooq.com/q/d/l/?s={stooq_ticker}{suffix}&i=d"
-            response = requests.get(url, headers={'User-Agent': _BROWSER_UA}, timeout=15)
+            response = requests.get(url, headers={'User-Agent': _BROWSER_UA}, timeout=10)
             if response.status_code == 200 and len(response.text) > 100:
                 df = pd.read_csv(StringIO(response.text))
                 if not df.empty and 'Close' in df.columns:
                     df['Date'] = pd.to_datetime(df['Date'])
                     df = df.set_index('Date').sort_index()
-                    if len(df) > 1 and df.index[0] > df.index[-1]:
-                        df = df.iloc[::-1]
                     return df
         return None
-    except Exception:
+    except Exception as e:
+        st.sidebar.error(f"Stooq Fallback Error: {e}")
         return None
 
 # ============================================================================
@@ -512,13 +554,17 @@ def get_portfolio_prices(tickers_tuple):
         return {}
 
 
-def get_stock_data_safe(ticker_symbol):
+def get_stock_data_safe(ticker_symbol, demo_mode=False):
     """
     Fetch stock data with multi-source resilience.
     Priority: Session cache → Fresh disk cache (< 30 min) → Yahoo Finance
-              → Stooq → Stale disk cache (any age)
+              → Stooq → Stale disk cache (any age) → Simulated Data (if demo_mode)
     Only successful results are cached (failures are NEVER cached).
     """
+    # === 0. DEMO MODE (Instant simulation) ===
+    if demo_mode:
+        return generate_simulated_data(ticker_symbol) + (None,)
+
     # === 1. CHECK SESSION CACHE (instant, no API call) ===
     cache_key = _cache_key("data", ticker_symbol)
     cached = _get_from_session_cache(cache_key, max_age_seconds=1800)
@@ -526,7 +572,6 @@ def get_stock_data_safe(ticker_symbol):
         return cached
 
     # === 2. CHECK FRESH DISK CACHE (serve without API calls if < 30 min old) ===
-    # This prevents the slow failure loop when Yahoo is actively rate-limiting.
     disk_cached = load_from_disk_cache(ticker_symbol)
     if disk_cached:
         cached_info, cached_hist, age_min = disk_cached
@@ -752,6 +797,14 @@ lang = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 st.sidebar.subheader("📈 Asset Selection")
 
+# Demo Mode Toggle
+demo_mode = st.sidebar.toggle(
+    "🧪 Demo Mode (Simulated Data)", 
+    value=st.session_state.get('demo_mode_active', False),
+    help="Enable this to test the dashboard with simulated data if Yahoo Finance is blocked."
+)
+st.session_state.demo_mode_active = demo_mode
+
 asset_input = st.sidebar.text_input(
     "Enter Ticker Symbol:",
     value="AAPL",
@@ -783,24 +836,26 @@ selected_period = st.sidebar.selectbox(
 
 # Fetch stock data
 with st.spinner(f"📊 Fetching data for {asset}..."):
-    info, hist, fetch_warning = get_stock_data_safe(asset)
+    info, hist, fetch_warning = get_stock_data_safe(asset, demo_mode=demo_mode)
 
-# FIX 4: Graceful degradation — if Yahoo + Stooq both failed, try Stooq directly
-# as a last-resort before giving up entirely
+# Ultimate fallback: if everything failed, offer Demo Mode
 if info is None or hist is None:
-    with st.spinner("🔄 Trying alternative data source..."):
-        fallback_hist = fetch_stooq_history(asset)
-        if fallback_hist is not None and not fallback_hist.empty:
-            hist = calculate_indicators(fallback_hist)
-            info = _build_info_from_history(asset, hist)
-            fetch_warning = "⚠️ Using Stooq fallback data. Fundamental metrics (P/E, Market Cap, etc.) unavailable."
-        else:
-            st.error(
-                f"❌ Could not retrieve data for **{asset}** from Yahoo Finance or Stooq. "
-                "This is usually a temporary rate-limit. Please wait 2-3 minutes and try again, "
-                "or click **Clear Cache** in the sidebar and refresh."
-            )
-            st.stop()
+    st.error(
+        f"❌ Could not retrieve data for **{asset}** from Yahoo Finance or Stooq. "
+        "This usually happens due to temporary API rate-limits."
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Try Again"):
+            st.rerun()
+    with col2:
+        if st.button("🧪 Switch to Demo Mode"):
+            st.session_state.demo_mode_active = True
+            st.rerun()
+            
+    st.info("💡 **Tip:** Click 'Clear Cache' in the sidebar if you recently updated your settings.")
+    st.stop()
 
 if fetch_warning:
     if "cached data" in fetch_warning or "Stooq" in fetch_warning:
@@ -836,7 +891,7 @@ if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
 compare_hist = None
 if compare_ticker:
     with st.spinner(f"⚖️ Fetching comparison data for {compare_ticker}..."):
-        _, compare_hist, compare_error = get_stock_data_safe(compare_ticker)
+        _, compare_hist, compare_error = get_stock_data_safe(compare_ticker, demo_mode=demo_mode)
         if compare_error and "rate-limited" in str(compare_error):
             st.sidebar.warning(f"⚠️ Comparison error: {compare_error}")
             compare_hist = None
