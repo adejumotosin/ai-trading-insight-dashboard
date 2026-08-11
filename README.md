@@ -1,109 +1,85 @@
-# AI Trading Insight Dashboard
+# AI Trading Insight Dashboard V2
 
-A Streamlit-based financial dashboard that combines market data, candlestick visualization, financial news, sentiment analysis, and AI-generated research commentary.
+A Streamlit market-intelligence dashboard that combines resilient market data, transparent technical analytics, reproducible strategy backtests, risk-based position sizing, linked market headlines, and grounded AI research.
 
-## Features
+## What changed in V2
 
-- Interactive candlestick charts for supported market symbols
-- Historical market data through Yahoo Finance / `yfinance`
-- AI-generated market commentary using Google Gemini
-- Financial news retrieval and sentiment-oriented analysis
-- Multi-language output support
-- Downloadable PDF and CSV reports
-- Streamlit-based browser interface
+- Rebuilt the project into a modular application instead of keeping the entire system in one large `finance.py` file.
+- Fixed the history selector so the selected 1M, 3M, 6M, 1Y, 2Y, 5Y, or 10Y period is actually used for market-data retrieval and analytics.
+- Added a deterministic trend engine with explainable factor scores rather than letting the language model invent a trading signal.
+- Added RSI, MACD, ATR, realized volatility, multi-horizon returns, support/resistance, and max-drawdown analytics.
+- Added a reproducible long-only SMA backtest with next-session execution, configurable SMA length, explicit transaction costs, Sharpe ratio, drawdown, exposure, and trade statistics.
+- Added a position-risk calculator based on account size, risk percentage, entry, and stop distance.
+- Reworked AI output into a grounded research brief using only supplied technicals, backtest metrics, and retrieved headlines.
+- AI is now optional. Missing `GROQ_API_KEY` no longer prevents the rest of the dashboard from loading.
+- News headlines now preserve clickable source links and publication metadata.
+- Added deterministic demo data for interface testing when external market APIs are unavailable.
+- Expanded symbol validation to support common Yahoo Finance formats such as `BTC-USD`, `^GSPC`, `GC=F`, and `EURUSD=X`.
+- Added enriched OHLCV CSV exports.
+- Replaced the older visual treatment with a denser finance-terminal interface.
 
-## Technology
+## Architecture
 
-- Python
-- Streamlit
-- `yfinance`
-- Plotly
-- Google Generative AI
-- Google News RSS
-- BeautifulSoup
-- FPDF
-- Translation utilities
+```text
+app.py
+├── core/market_data.py   # Yahoo/Stooq/demo data + news
+├── core/analytics.py     # indicators, market state, risk sizing, backtest
+└── core/ai_research.py   # grounded AI prompt + JSON parsing
+
+finance.py                # compatibility entrypoint for existing deployments
+```
 
 ## Run locally
 
 ```bash
 git clone https://github.com/adejumotosin/ai-trading-insight-dashboard.git
 cd ai-trading-insight-dashboard
-
 python -m venv .venv
 ```
 
-Activate the environment:
-
-```bash
-# macOS / Linux
-source .venv/bin/activate
-
-# Windows
-.venv\Scripts\activate
-```
-
-Install dependencies:
+Activate the environment and install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Configure the Gemini API key in `.streamlit/secrets.toml`:
+Optional Streamlit secrets:
 
 ```toml
-GEMINI_API_KEY = "your-gemini-api-key"
+GROQ_API_KEY = "your-groq-api-key"
+
+# Optional access gate. If omitted, the dashboard is publicly usable.
+allowed_users = ["you@example.com"]
 ```
 
-Run the dashboard:
+Run either entrypoint:
 
 ```bash
-streamlit run finance.py
+streamlit run app.py
 ```
 
-## Architecture
+Existing deployments that run `streamlit run finance.py` continue to work because `finance.py` is retained as a compatibility entrypoint.
 
-```text
-Market symbol
-    |
-    +------> Yahoo Finance price history
-    |              |
-    |              v
-    |        Plotly visualizations
-    |
-    +------> Financial news feed
-                   |
-                   v
-          AI analysis + sentiment
-                   |
-                   v
-          Streamlit dashboard
-                   |
-                   v
-             PDF / CSV export
-```
+## Backtest definition
 
-## Current limitations
+The built-in SMA strategy is intentionally simple and reproducible:
 
-- AI-generated commentary is analytical assistance, not a trading signal with validated predictive performance.
-- Yahoo Finance data is convenient for research but should not be treated as institutional market data.
-- News sentiment quality depends on the availability and relevance of retrieved headlines.
-- Any investment interpretation should be independently verified before use.
+1. Compute the selected simple moving average from daily closing prices.
+2. Signal long when `Close > SMA`.
+3. Shift the position by one session to avoid using the same close for both signal generation and execution.
+4. Deduct the configured transaction cost whenever the position changes.
+5. Compare the resulting equity curve with buy-and-hold over the same sample.
 
-## Potential upgrades
+This is a research baseline, not evidence that the rule will remain profitable.
 
-- Add reproducible strategy backtests instead of qualitative AI commentary alone
-- Add portfolio-level analytics and risk metrics
-- Add economic-calendar and macro-event context
-- Add source citations for generated claims
-- Add caching and structured historical research storage
-- Add model evaluation for sentiment and directional forecasts
+## Data caveats
+
+Yahoo Finance and Stooq are convenient research sources, not institutional execution feeds. Data may be delayed, adjusted, incomplete, or temporarily unavailable. Demo mode is synthetic and is clearly labeled in the interface.
 
 ## License
 
-MIT License.
+MIT
 
 ## Author
 
-Oluwatosin Adejumo  
-[tosinadejumo1997@gmail.com](mailto:tosinadejumo1997@gmail.com)
+Oluwatosin Adejumo
