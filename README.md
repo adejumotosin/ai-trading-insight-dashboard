@@ -1,111 +1,109 @@
-# ai-trading-insight-dashboard
-A Streamlit-based AI-powered financial dashboard for live trading insights, candlestick analysis, news sentiment, and downloadable reports.
-# AI-Powered Trading & Market Insight Dashboard
+# AI Trading Insight Dashboard
 
-This is an AI-enhanced financial dashboard built with Streamlit, integrating real-time stock data, news sentiment analysis, and Gemini AI to provide intelligent trading insights for stocks, cryptocurrencies, and other assets.
-
----
+A Streamlit-based financial dashboard that combines market data, candlestick visualization, financial news, sentiment analysis, and AI-generated research commentary.
 
 ## Features
 
-| Feature                   | Description                                                                 |
-|--------------------------|-----------------------------------------------------------------------------|
-| Candlestick Charts       | Visualize 1-year price movements of any asset (e.g., AAPL, BTC, TSLA)       |
-| AI Insight Generator     | Generate professional trading insights using Google Gemini AI               |
-| News Sentiment Analysis  | Get real-time financial headlines and sentiment from Google News RSS        |
-| Multi-language Support   | Translate AI insights into English, French, Spanish, German, or Chinese     |
-| Export Reports           | Download AI analysis as PDF and CSV files                                   |
-| Simulated Login Access   | Restrict access using simple email-based input                              |
+- Interactive candlestick charts for supported market symbols
+- Historical market data through Yahoo Finance / `yfinance`
+- AI-generated market commentary using Google Gemini
+- Financial news retrieval and sentiment-oriented analysis
+- Multi-language output support
+- Downloadable PDF and CSV reports
+- Streamlit-based browser interface
 
----
-
-## Powered By
-
-- Gemini 1.5 Flash (Google Generative AI)
-- Yahoo Finance (via yfinance)
-- Google News RSS
-- Streamlit for UI
-- Plotly for charts
-- FPDF for report generation
-
----
-
-## Demo
-
-![App Screenshot](https://user-images.githubusercontent.com/yourusername/demo-screenshot.png)
-
-> Replace with your own screenshot or GIF demo.
-
----
-
-## Tech Stack
+## Technology
 
 - Python
 - Streamlit
-- yfinance
-- plotly
-- google-generativeai
-- fpdf
+- `yfinance`
+- Plotly
+- Google Generative AI
+- Google News RSS
 - BeautifulSoup
-- googletrans
+- FPDF
+- Translation utilities
 
----
-
-## Installation
+## Run locally
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/ai-trading-insight-dashboard
+git clone https://github.com/adejumotosin/ai-trading-insight-dashboard.git
 cd ai-trading-insight-dashboard
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Create secrets file
-mkdir -p .streamlit
-echo 'GEMINI_API_KEY = "your-gemini-api-key"' > .streamlit/secrets.toml
-
-# Run the app
-streamlit run finance.py
+python -m venv .venv
 ```
 
----
+Activate the environment:
 
-## Secrets Configuration
+```bash
+# macOS / Linux
+source .venv/bin/activate
 
-Create a `.streamlit/secrets.toml` file with your Gemini API key:
+# Windows
+.venv\Scripts\activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Configure the Gemini API key in `.streamlit/secrets.toml`:
 
 ```toml
 GEMINI_API_KEY = "your-gemini-api-key"
 ```
 
----
+Run the dashboard:
 
-## Deployment
+```bash
+streamlit run finance.py
+```
 
-To deploy on [Streamlit Cloud](https://streamlit.io/cloud):
+## Architecture
 
-1. Push your project to GitHub
-2. Create a new app from the repo on Streamlit Cloud
-3. Add your `GEMINI_API_KEY` in the app's Secrets Manager
-4. Deploy the app
+```text
+Market symbol
+    |
+    +------> Yahoo Finance price history
+    |              |
+    |              v
+    |        Plotly visualizations
+    |
+    +------> Financial news feed
+                   |
+                   v
+          AI analysis + sentiment
+                   |
+                   v
+          Streamlit dashboard
+                   |
+                   v
+             PDF / CSV export
+```
 
----
+## Current limitations
+
+- AI-generated commentary is analytical assistance, not a trading signal with validated predictive performance.
+- Yahoo Finance data is convenient for research but should not be treated as institutional market data.
+- News sentiment quality depends on the availability and relevance of retrieved headlines.
+- Any investment interpretation should be independently verified before use.
+
+## Potential upgrades
+
+- Add reproducible strategy backtests instead of qualitative AI commentary alone
+- Add portfolio-level analytics and risk metrics
+- Add economic-calendar and macro-event context
+- Add source citations for generated claims
+- Add caching and structured historical research storage
+- Add model evaluation for sentiment and directional forecasts
 
 ## License
 
-This project is licensed under the MIT License.
+MIT License.
 
----
+## Author
 
-## Contributing
-
-Contributions are welcome. Please fork the repository, make your changes, and open a pull request. For major changes, please open an issue first to discuss what you would like to change.
-
----
-
-## Contact
-
-Developed by Oluwatosin Adejumo 
-
-Email: adejumoking@gmail.com
+Oluwatosin Adejumo  
+[tosinadejumo1997@gmail.com](mailto:tosinadejumo1997@gmail.com)
