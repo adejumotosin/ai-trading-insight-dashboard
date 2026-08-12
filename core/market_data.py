@@ -31,15 +31,36 @@ PERIOD_BARS = {
     "10y": 2640,
 }
 
+WARMUP_PERIOD = {
+    "1mo": "2y",
+    "3mo": "2y",
+    "6mo": "2y",
+    "1y": "2y",
+    "2y": "5y",
+    "5y": "10y",
+    "10y": "max",
+}
+
 
 @dataclass
 class MarketBundle:
     symbol: str
     info: dict[str, Any]
     history: pd.DataFrame
+    analysis_history: pd.DataFrame
     source: str
     fetched_at: datetime
+    requested_period: str
+    adjusted_prices: bool = True
     warning: str | None = None
+
+    @property
+    def display_rows(self) -> int:
+        return len(self.history)
+
+    @property
+    def analysis_rows(self) -> int:
+        return len(self.analysis_history)
 
 
 def validate_ticker(symbol: str) -> tuple[bool, str]:
@@ -65,27 +86,36 @@ def _flatten_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
 def _normalize_history(df: pd.DataFrame | None) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
+
     out = _flatten_yf_columns(df)
-    rename = {str(c).title(): c for c in out.columns}
+    title_lookup = {str(c).title(): c for c in out.columns}
     required = ["Open", "High", "Low", "Close"]
     if not all(name in out.columns for name in required):
         mapped = {}
         for target in required + ["Volume"]:
-            original = rename.get(target)
+            original = title_lookup.get(target)
             if original is not None:
                 mapped[original] = target
         out = out.rename(columns=mapped)
+
     for col in required + ["Volume"]:
         if col not in out.columns:
             out[col] = 0.0 if col == "Volume" else np.nan
         out[col] = pd.to_numeric(out[col], errors="coerce")
-    out = out.dropna(subset=["Close"]).sort_index()
+
+    out.index = pd.to_datetime(out.index, errors="coerce")
+    out = out[~out.index.isna()]
+    if getattr(out.index, "tz", None) is not None:
+        out.index = out.index.tz_localize(None)
+    out = out.dropna(subset=["Open", "High", "Low", "Close"]).sort_index()
+    out = out[~out.index.duplicated(keep="last")]
     return out[["Open", "High", "Low", "Close", "Volume"]]
 
 
 def _info_from_history(symbol: str, hist: pd.DataFrame) -> dict[str, Any]:
     last = hist.iloc[-1]
     prev = hist.iloc[-2] if len(hist) > 1 else last
+    trailing = hist.tail(min(252, len(hist)))
     return {
         "symbol": symbol,
         "longName": symbol,
@@ -95,37 +125,30 @@ def _info_from_history(symbol: str, hist: pd.DataFrame) -> dict[str, Any]:
         "open": float(last["Open"]),
         "dayLow": float(last["Low"]),
         "dayHigh": float(last["High"]),
-        "fiftyTwoWeekLow": float(hist["Low"].tail(252).min()),
-        "fiftyTwoWeekHigh": float(hist["High"].tail(252).max()),
+        "fiftyTwoWeekLow": float(trailing["Low"].min()),
+        "fiftyTwoWeekHigh": float(trailing["High"].max()),
         "volume": int(last.get("Volume", 0) or 0),
-        "averageVolume": int(hist["Volume"].tail(20).mean()) if "Volume" in hist else 0,
+        "averageVolume": int(trailing["Volume"].tail(20).mean()) if "Volume" in trailing else 0,
     }
 
 
 def _yahoo_history(symbol: str, period: str) -> pd.DataFrame:
+    kwargs = dict(
+        tickers=symbol,
+        period=period,
+        interval="1d",
+        auto_adjust=True,
+        progress=False,
+        threads=False,
+        timeout=15,
+    )
     try:
-        df = yf.download(
-            symbol,
-            period=period,
-            interval="1d",
-            auto_adjust=False,
-            repair=True,
-            progress=False,
-            threads=False,
-            multi_level_index=False,
-            timeout=12,
-        )
+        df = yf.download(repair=True, multi_level_index=False, **kwargs)
         return _normalize_history(df)
     except TypeError:
         try:
-            df = yf.download(
-                symbol,
-                period=period,
-                interval="1d",
-                auto_adjust=False,
-                progress=False,
-                threads=False,
-            )
+            kwargs.pop("timeout", None)
+            df = yf.download(**kwargs)
             return _normalize_history(df)
         except Exception:
             return pd.DataFrame()
@@ -146,20 +169,22 @@ def _yahoo_info(symbol: str) -> dict[str, Any]:
         if not info:
             try:
                 fast = ticker.fast_info
-                info.update({
-                    "symbol": symbol,
-                    "longName": symbol,
-                    "currentPrice": getattr(fast, "last_price", None),
-                    "previousClose": getattr(fast, "previous_close", None),
-                    "open": getattr(fast, "open", None),
-                    "dayLow": getattr(fast, "day_low", None),
-                    "dayHigh": getattr(fast, "day_high", None),
-                    "fiftyTwoWeekLow": getattr(fast, "year_low", None),
-                    "fiftyTwoWeekHigh": getattr(fast, "year_high", None),
-                    "marketCap": getattr(fast, "market_cap", None),
-                    "currency": getattr(fast, "currency", None),
-                    "exchange": getattr(fast, "exchange", None),
-                })
+                info.update(
+                    {
+                        "symbol": symbol,
+                        "longName": symbol,
+                        "currentPrice": getattr(fast, "last_price", None),
+                        "previousClose": getattr(fast, "previous_close", None),
+                        "open": getattr(fast, "open", None),
+                        "dayLow": getattr(fast, "day_low", None),
+                        "dayHigh": getattr(fast, "day_high", None),
+                        "fiftyTwoWeekLow": getattr(fast, "year_low", None),
+                        "fiftyTwoWeekHigh": getattr(fast, "year_high", None),
+                        "marketCap": getattr(fast, "market_cap", None),
+                        "currency": getattr(fast, "currency", None),
+                        "exchange": getattr(fast, "exchange", None),
+                    }
+                )
             except Exception:
                 pass
     except Exception:
@@ -167,8 +192,15 @@ def _yahoo_info(symbol: str) -> dict[str, Any]:
     return info
 
 
+def _supports_stooq_fallback(symbol: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9.]{0,9}", symbol))
+
+
 def _stooq_history(symbol: str) -> pd.DataFrame:
-    stooq_symbol = symbol.replace("-", ".").lower()
+    if not _supports_stooq_fallback(symbol):
+        return pd.DataFrame()
+
+    stooq_symbol = symbol.lower()
     for suffix in (".us", ""):
         url = f"https://stooq.com/q/d/l/?s={stooq_symbol}{suffix}&i=d"
         try:
@@ -178,17 +210,19 @@ def _stooq_history(symbol: str) -> pd.DataFrame:
                 if "Date" in df.columns and "Close" in df.columns:
                     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
                     df = df.dropna(subset=["Date"]).set_index("Date").sort_index()
-                    return _normalize_history(df)
+                    normalized = _normalize_history(df)
+                    if not normalized.empty:
+                        return normalized
         except Exception:
             continue
     return pd.DataFrame()
 
 
-def _demo_history(symbol: str, period: str) -> pd.DataFrame:
-    bars = PERIOD_BARS.get(period, 264)
+def _demo_history(symbol: str, bars: int) -> pd.DataFrame:
+    bars = max(int(bars), 520)
     seed = int(hashlib.sha256(symbol.encode("utf-8")).hexdigest()[:16], 16) % (2**32)
     rng = np.random.default_rng(seed)
-    dates = pd.bdate_range(end=pd.Timestamp.utcnow().normalize(), periods=bars)
+    dates = pd.bdate_range(end=pd.Timestamp.utcnow().normalize().tz_localize(None), periods=bars)
     base = 40 + (seed % 460)
     drift = ((seed % 9) - 3) / 100000
     shocks = rng.normal(drift, 0.017, bars)
@@ -205,44 +239,71 @@ def _demo_history(symbol: str, period: str) -> pd.DataFrame:
     )
 
 
+def _tail_requested(enriched: pd.DataFrame, period: str) -> pd.DataFrame:
+    bars = PERIOD_BARS.get(period)
+    return enriched.tail(bars).copy() if bars else enriched.copy()
+
+
 def fetch_market_bundle(symbol: str, period: str = "1y", demo_mode: bool = False) -> MarketBundle:
     symbol = symbol.strip().upper()
     valid, message = validate_ticker(symbol)
     if not valid:
         raise ValueError(message)
+    if period not in PERIOD_BARS:
+        raise ValueError(f"Unsupported period: {period}")
 
     now = datetime.now(timezone.utc)
+    fetch_period = WARMUP_PERIOD.get(period, "2y")
+
     if demo_mode:
-        hist = _demo_history(symbol, period)
-        info = _info_from_history(symbol, hist)
+        analysis_raw = _demo_history(symbol, max(PERIOD_BARS.get(fetch_period, 0), PERIOD_BARS[period] + 260))
+        analysis_history = calculate_indicators(analysis_raw)
+        display_history = _tail_requested(analysis_history, period)
+        info = _info_from_history(symbol, analysis_raw)
         info["longName"] = f"{symbol} Demo Series"
+        info.setdefault("currency", "USD")
         return MarketBundle(
             symbol=symbol,
             info=info,
-            history=calculate_indicators(hist),
+            history=display_history,
+            analysis_history=analysis_history,
             source="Simulated",
             fetched_at=now,
+            requested_period=period,
+            adjusted_prices=True,
             warning="Demo mode uses deterministic synthetic data and must not be interpreted as live market information.",
         )
 
-    hist = _yahoo_history(symbol, period)
+    analysis_raw = _yahoo_history(symbol, fetch_period)
     source = "Yahoo Finance"
     warning = None
+    adjusted_prices = True
 
-    if hist.empty:
-        hist = _stooq_history(symbol)
-        if not hist.empty:
-            bars = PERIOD_BARS.get(period)
-            if bars:
-                hist = hist.tail(bars)
+    if analysis_raw.empty:
+        analysis_raw = _stooq_history(symbol)
+        if not analysis_raw.empty:
             source = "Stooq fallback"
-            warning = "Yahoo Finance was unavailable, so historical data is being served from Stooq."
+            adjusted_prices = False
+            warning = (
+                "Yahoo Finance was unavailable, so historical data is being served from Stooq. "
+                "Corporate-action adjustment behavior may differ from Yahoo Finance."
+            )
 
-    if hist.empty:
-        raise RuntimeError("No market history could be retrieved from Yahoo Finance or Stooq.")
+    if analysis_raw.empty:
+        fallback_note = (
+            " Stooq fallback is only attempted for ordinary equity symbols."
+            if not _supports_stooq_fallback(symbol)
+            else ""
+        )
+        raise RuntimeError(f"No market history could be retrieved from available providers.{fallback_note}")
+
+    analysis_history = calculate_indicators(analysis_raw)
+    display_history = _tail_requested(analysis_history, period)
+    if display_history.empty:
+        raise RuntimeError("Market data was retrieved but the selected display period is empty.")
 
     info = _yahoo_info(symbol)
-    derived = _info_from_history(symbol, hist)
+    derived = _info_from_history(symbol, analysis_raw)
     for key, value in derived.items():
         if info.get(key) in (None, "", 0):
             info[key] = value
@@ -250,30 +311,37 @@ def fetch_market_bundle(symbol: str, period: str = "1y", demo_mode: bool = False
     return MarketBundle(
         symbol=symbol,
         info=info,
-        history=calculate_indicators(hist),
+        history=display_history,
+        analysis_history=analysis_history,
         source=source,
         fetched_at=now,
+        requested_period=period,
+        adjusted_prices=adjusted_prices,
         warning=warning,
     )
 
 
-def fetch_news(symbol: str, max_items: int = 8) -> list[dict[str, str]]:
-    query = quote_plus(f"{symbol} stock OR market")
+def fetch_news(symbol: str, company_name: str | None = None, max_items: int = 8) -> list[dict[str, str]]:
+    subject = company_name.strip() if company_name and company_name.strip() else symbol
+    query = quote_plus(f'"{subject}" market OR stock OR earnings')
     url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
     try:
         response = requests.get(url, headers={"User-Agent": _BROWSER_UA}, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, features="xml")
-        items = []
-        for item in soup.find_all("item")[:max_items]:
+        items: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in soup.find_all("item"):
             title = item.title.get_text(strip=True) if item.title else ""
+            if not title or title in seen:
+                continue
+            seen.add(title)
             link = item.link.get_text(strip=True) if item.link else ""
             published = item.pubDate.get_text(strip=True) if item.pubDate else ""
-            source = ""
-            if item.source:
-                source = item.source.get_text(strip=True)
-            if title:
-                items.append({"title": title, "link": link, "published": published, "source": source})
+            source = item.source.get_text(strip=True) if item.source else ""
+            items.append({"title": title, "link": link, "published": published, "source": source})
+            if len(items) >= max_items:
+                break
         return items
     except Exception:
         return []

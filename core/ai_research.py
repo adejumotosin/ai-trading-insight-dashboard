@@ -4,6 +4,20 @@ import json
 import re
 from typing import Any
 
+REQUIRED_KEYS = {
+    "market_regime",
+    "conviction",
+    "time_horizon",
+    "thesis",
+    "bullish_factors",
+    "bearish_factors",
+    "invalidation_conditions",
+    "levels_to_watch",
+    "news_context",
+    "data_caveats",
+    "bottom_line",
+}
+
 
 def parse_json_object(text: str | None) -> dict[str, Any] | None:
     if not text:
@@ -28,25 +42,47 @@ def parse_json_object(text: str | None) -> dict[str, Any] | None:
     return None
 
 
+def validate_research_payload(data: dict[str, Any] | None) -> tuple[bool, str]:
+    if not isinstance(data, dict):
+        return False, "AI output was not a JSON object."
+    missing = REQUIRED_KEYS - set(data)
+    if missing:
+        return False, f"AI output is missing required fields: {', '.join(sorted(missing))}."
+    list_fields = (
+        "bullish_factors",
+        "bearish_factors",
+        "invalidation_conditions",
+        "levels_to_watch",
+        "data_caveats",
+    )
+    for field in list_fields:
+        if not isinstance(data.get(field), list):
+            return False, f"AI field '{field}' must be a list."
+    return True, ""
+
+
 def build_research_prompt(
     symbol: str,
     company_name: str,
     snapshot: dict[str, Any],
     backtest_metrics: dict[str, Any] | None,
     news: list[dict[str, str]],
+    data_context: dict[str, Any] | None = None,
 ) -> str:
     payload = {
         "symbol": symbol,
         "company_name": company_name,
+        "data_context": data_context or {},
         "technical_snapshot": snapshot,
         "backtest": backtest_metrics,
         "news": news,
     }
     return f"""
-You are a market research copilot. Analyze only the supplied data. Do not invent fundamentals,
-price targets, events, or news that are not in the payload. Treat the deterministic trend score
-as an input, not as proof of future returns. Backtest results are historical and must not be
-presented as predictive guarantees.
+You are a market research copilot. Analyze only the supplied payload. Do not invent fundamentals,
+price targets, events, forecasts, or news that are not present. The deterministic trend model is
+an input, not proof of future performance. Backtest results are historical simulations and must
+not be presented as predictive guarantees. Distinguish clearly between observed data, historical
+simulation, and interpretation. Do not issue a buy/sell command.
 
 DATA:
 {json.dumps(payload, indent=2, default=str)}
@@ -68,26 +104,22 @@ Return ONLY valid JSON with this exact schema:
 """.strip()
 
 
-def generate_research(client: Any, prompt: str) -> tuple[dict[str, Any] | None, str | None]:
+def generate_research(client: Any, prompt: str, model: str = "llama-3.3-70b-versatile") -> tuple[dict[str, Any] | None, str | None, str | None]:
+    kwargs = {
+        "messages": [{"role": "user", "content": prompt}],
+        "model": model,
+        "temperature": 0.1,
+    }
     try:
-        response = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
-            temperature=0.1,
-            response_format={"type": "json_object"},
-        )
-        raw = response.choices[0].message.content.strip()
-        return parse_json_object(raw), raw
-    except TypeError:
         try:
-            response = client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model="llama-3.3-70b-versatile",
-                temperature=0.1,
-            )
-            raw = response.choices[0].message.content.strip()
-            return parse_json_object(raw), raw
-        except Exception:
-            return None, None
-    except Exception:
-        return None, None
+            response = client.chat.completions.create(response_format={"type": "json_object"}, **kwargs)
+        except TypeError:
+            response = client.chat.completions.create(**kwargs)
+        raw = response.choices[0].message.content.strip()
+        data = parse_json_object(raw)
+        valid, error = validate_research_payload(data)
+        if not valid:
+            return None, raw, error
+        return data, raw, None
+    except Exception as exc:
+        return None, None, f"AI request failed: {exc}"

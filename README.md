@@ -1,33 +1,36 @@
-# AI Trading Insight Dashboard V2
+# Axiom Market Intelligence
 
-A Streamlit market-intelligence dashboard that combines resilient market data, transparent technical analytics, reproducible strategy backtests, risk-based position sizing, linked market headlines, and grounded AI research.
+A Streamlit market-research dashboard for transparent technical analysis, risk sizing, historical strategy testing, market news, and grounded AI commentary.
 
-## What changed in V2
+## V3 highlights
 
-- Rebuilt the project into a modular application instead of keeping the entire system in one large `finance.py` file.
-- Fixed the history selector so the selected 1M, 3M, 6M, 1Y, 2Y, 5Y, or 10Y period is actually used for market-data retrieval and analytics.
-- Added a deterministic trend engine with explainable factor scores rather than letting the language model invent a trading signal.
-- Added RSI, MACD, ATR, realized volatility, multi-horizon returns, support/resistance, and max-drawdown analytics.
-- Added a reproducible long-only SMA backtest with next-session execution, configurable SMA length, explicit transaction costs, Sharpe ratio, drawdown, exposure, and trade statistics.
-- Added a position-risk calculator based on account size, risk percentage, entry, and stop distance.
-- Reworked AI output into a grounded research brief using only supplied technicals, backtest metrics, and retrieved headlines.
-- AI is now optional. Missing `GROQ_API_KEY` no longer prevents the rest of the dashboard from loading.
-- News headlines now preserve clickable source links and publication metadata.
-- Added deterministic demo data for interface testing when external market APIs are unavailable.
-- Expanded symbol validation to support common Yahoo Finance formats such as `BTC-USD`, `^GSPC`, `GC=F`, and `EURUSD=X`.
-- Added enriched OHLCV CSV exports.
-- Replaced the older visual treatment with a denser finance-terminal interface.
+- Range-independent technical analysis with indicator warm-up history
+- Corporate-action-adjusted Yahoo Finance OHLC data for cleaner return and backtest calculations
+- Safer Stooq fallback that is limited to compatible equity-style symbols
+- Deterministic trend regime with normalized score and explicit data coverage
+- SMA 20/50/100/200, EMA 20, RSI 14, MACD, ATR, Bollinger Bands, volatility regime, support and resistance
+- Currency-aware price formatting for non-USD assets
+- Long and short position sizing with stop validation and leverage caps
+- SMA backtest with close-signal / next-open execution, entry and exit costs, and warm-up data
+- Backtest metrics including CAGR, Sharpe, Sortino, Calmar, drawdown, exposure, win rate, and trade statistics
+- Context-bound AI research so a brief cannot silently carry over to another symbol, period, market bar, or backtest configuration
+- Data-quality and provenance panel
+- GitHub Actions CI and regression tests
+- Deterministic demo data for UI testing when external providers are unavailable
 
 ## Architecture
 
 ```text
 app.py
-├── core/market_data.py   # Yahoo/Stooq/demo data + news
-├── core/analytics.py     # indicators, market state, risk sizing, backtest
-└── core/ai_research.py   # grounded AI prompt + JSON parsing
-
-finance.py                # compatibility entrypoint for existing deployments
+  |
+  +-- core/market_data.py   -> Yahoo Finance, Stooq fallback, news, warm-up history
+  +-- core/analytics.py     -> indicators, trend model, risk sizing, backtesting
+  +-- core/ai_research.py   -> grounded AI prompt, JSON validation
+  |
+  +-- tests/                -> regression tests
 ```
+
+`finance.py` remains a compatibility entrypoint for deployments that still run `streamlit run finance.py`.
 
 ## Run locally
 
@@ -37,48 +40,71 @@ cd ai-trading-insight-dashboard
 python -m venv .venv
 ```
 
-Activate the environment and install dependencies:
+Activate the environment:
+
+```bash
+# macOS / Linux
+source .venv/bin/activate
+
+# Windows
+.venv\Scripts\activate
+```
+
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Optional Streamlit secrets:
-
-```toml
-GROQ_API_KEY = "your-groq-api-key"
-
-# Optional access gate. If omitted, the dashboard is publicly usable.
-allowed_users = ["you@example.com"]
-```
-
-Run either entrypoint:
+Run the dashboard:
 
 ```bash
 streamlit run app.py
 ```
 
-Existing deployments that run `streamlit run finance.py` continue to work because `finance.py` is retained as a compatibility entrypoint.
+## Optional AI research
 
-## Backtest definition
+The deterministic dashboard works without an AI key. To enable AI research, add a Streamlit secret:
 
-The built-in SMA strategy is intentionally simple and reproducible:
+```toml
+GROQ_API_KEY = "your-key"
+```
 
-1. Compute the selected simple moving average from daily closing prices.
-2. Signal long when `Close > SMA`.
-3. Shift the position by one session to avoid using the same close for both signal generation and execution.
-4. Deduct the configured transaction cost whenever the position changes.
-5. Compare the resulting equity curve with buy-and-hold over the same sample.
+You may optionally override the model:
 
-This is a research baseline, not evidence that the rule will remain profitable.
+```toml
+GROQ_MODEL = "llama-3.3-70b-versatile"
+```
 
-## Data caveats
+Do not commit `.streamlit/secrets.toml` to Git.
 
-Yahoo Finance and Stooq are convenient research sources, not institutional execution feeds. Data may be delayed, adjusted, incomplete, or temporarily unavailable. Demo mode is synthetic and is clearly labeled in the interface.
+## Backtest methodology
 
-## License
+The included SMA strategy is intentionally simple and reproducible:
 
-MIT
+1. The signal is calculated after the daily close.
+2. The position changes at the next session open.
+3. Position P&L is measured from open to open while held.
+4. A final open position is marked to the last available close.
+5. The configured transaction cost is charged on entries and exits.
+6. Indicator warm-up data is loaded before the selected evaluation window.
+
+This design removes the previous close-to-close execution mismatch and prevents the selected chart range from deleting the history required to calculate longer moving averages.
+
+## Data notes
+
+Yahoo Finance is used as the primary research data source and adjusted OHLC prices are requested to reduce split-related distortions. Stooq is a fallback for compatible equity symbols only. Fallback adjustment behavior can differ from Yahoo Finance and is identified in the interface.
+
+The dashboard is research software, not an execution system or institutional market-data terminal. Market data may be delayed, incomplete, or revised.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+CI runs compilation and tests on supported Python versions for every pull request.
 
 ## Author
 
