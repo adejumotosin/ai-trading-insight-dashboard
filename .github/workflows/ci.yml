@@ -12,17 +12,21 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: |
@@ -33,4 +37,17 @@ jobs:
         run: python -m py_compile app.py finance.py core/*.py
 
       - name: Run tests
-        run: pytest -q
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q tests --import-mode=importlib 2>&1 | tee pytest-output.txt
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            while IFS= read -r line; do
+              safe_line=${line//'%'/'%25'}
+              safe_line=${safe_line//$'\r'/'%0D'}
+              safe_line=${safe_line//$'\n'/'%0A'}
+              echo "::error::$safe_line"
+            done < pytest-output.txt
+            exit "$status"
+          fi
