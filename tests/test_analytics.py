@@ -1,14 +1,7 @@
-import importlib.util
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 
-spec = importlib.util.spec_from_file_location("analytics", Path(__file__).parents[1] / "core" / "analytics.py")
-analytics = importlib.util.module_from_spec(spec)
-import sys
-sys.modules["analytics"] = analytics
-spec.loader.exec_module(analytics)
+from core import analytics
 
 
 def sample(n=420, rising=True):
