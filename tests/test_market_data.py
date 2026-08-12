@@ -3,10 +3,13 @@ import types
 
 import pandas as pd
 
-sys.modules.setdefault("yfinance", types.SimpleNamespace())
+try:
+    import yfinance  # noqa: F401
+except ImportError:
+    sys.modules["yfinance"] = types.SimpleNamespace()
 
-from core.market_data import _normalize_history, _supports_stooq_fallback, _tail_requested
 from core.analytics import calculate_indicators
+from core.market_data import _normalize_history, _supports_stooq_fallback, _tail_requested
 
 
 def test_stooq_fallback_is_not_used_for_yahoo_specific_syntax():
